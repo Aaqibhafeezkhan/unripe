@@ -6,6 +6,7 @@ published, and compare that with the policy.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
@@ -62,21 +63,26 @@ def display(path: Path) -> str:
 def line(rows: list[str], package: Package) -> int | None:
     """
     The line a package is locked on, for annotations, given the lockfile's
-    lower cased lines. Lockfiles spread one entry over several lines, so this
-    is the first line naming the package with its version on it or soon after.
+    lower cased lines. Most formats name the package and its version on one
+    line (`name@1.2.3:`, `name (1.2.3)`); the rest put the version on a line
+    just after the name, or for Pipfile.lock, further down.
     """
     names = {package.name.lower()}
     if package.ecosystem == "pypi":
         names |= {package.name.replace("-", "_"), package.name.replace("-", ".")}
-    version = package.version.lower()
-    first = None
-    for number, row in enumerate(rows):
-        if not any(name in row for name in names):
-            continue
-        first = first or number + 1
-        if any(version in later for later in rows[number:number + 40]):
-            return number + 1
-    return first
+    named = re.compile("|".join(rf"(?<![\w.-]){re.escape(name)}(?![\w.-])" for name in names))
+    # composer.lock keeps the `v` that unripe drops from versions
+    version = re.compile(rf"(?<![\w.-])v?{re.escape(package.version.lower())}(?![\w.-])")
+    hits = [number for number, row in enumerate(rows) if named.search(row)]
+    # on one line: where the name comes first, so `/react@18.2.0:` beats `/react-dom@18.2.0(react@18.2.0):`
+    same = [(named.search(rows[number]).start(), number) for number in hits if version.search(rows[number])]
+    if same:
+        return min(same)[1] + 1
+    for window in (4, 40):
+        for number in hits:
+            if any(version.search(row) for row in rows[number:number + window]):
+                return number + 1
+    return hits[0] + 1 if hits else None
 
 
 class Git:

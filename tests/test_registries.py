@@ -215,3 +215,24 @@ def test_when_reads_every_registry_style():
     assert registries.when("2024-01-02T03:04:05.678Z") == datetime(2024, 1, 2, 3, 4, 5, 678000, tzinfo=utc)
     assert registries.when("2024-01-02T03:04:05+00:00") == datetime(2024, 1, 2, 3, 4, 5, tzinfo=utc)
     assert registries.when("2024-01-02T03:04:05") == datetime(2024, 1, 2, 3, 4, 5, tzinfo=utc)
+
+
+def test_only_checked_versions_are_saved(fake, tmp_path):
+    for version in ("2.1.1", "2.1.2", "2.1.3"):
+        fake.add("npm", "ms", version)
+    found = Registries(Cache(tmp_path))
+    found.published(Package("npm", "ms", "2.1.2"))
+    found.published(Package("npm", "ms", "2.1.3"))
+    found.cache.save()
+    assert len(fake.urls) == 1
+    assert sorted(json.loads((tmp_path / "npm.json").read_text())) == ["ms@2.1.2", "ms@2.1.3"]
+
+
+def test_an_unchanged_cache_is_not_rewritten(fake, tmp_path):
+    fake.add("npm", "ms", "2.1.3")
+    first = Registries(Cache(tmp_path))
+    first.published(Package("npm", "ms", "2.1.3"))
+    first.cache.save()
+    second = Registries(Cache(tmp_path))
+    second.published(Package("npm", "ms", "2.1.3"))
+    assert second.cache.dirty == set()

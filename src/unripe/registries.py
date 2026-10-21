@@ -88,6 +88,9 @@ class Cache:
         self.lock = threading.Lock()
         self.data: dict[str, dict[str, str]] = {}
         self.dirty: set[str] = set()
+        # versions learned in passing (an npm document lists every version);
+        # kept for this run only, so the files on disk hold what was checked
+        self.passing: dict[tuple[str, str, str], datetime] = {}
 
     def table(self, ecosystem: str) -> dict[str, str]:
         if ecosystem not in self.data:
@@ -104,6 +107,8 @@ class Cache:
     def get(self, package: Package) -> datetime | None:
         with self.lock:
             value = self.table(package.ecosystem).get(f"{package.name}@{package.version}")
+            if value is None:
+                return self.passing.get(package.key)
         try:
             return when(value) if value else None
         except (TypeError, ValueError):
@@ -111,8 +116,14 @@ class Cache:
 
     def put(self, ecosystem: str, name: str, version: str, published: datetime) -> None:
         with self.lock:
-            self.table(ecosystem)[f"{name}@{version}"] = published.isoformat()
-            self.dirty.add(ecosystem)
+            table, value = self.table(ecosystem), published.isoformat()
+            if table.get(f"{name}@{version}") != value:
+                table[f"{name}@{version}"] = value
+                self.dirty.add(ecosystem)
+
+    def learn(self, ecosystem: str, name: str, version: str, published: datetime) -> None:
+        with self.lock:
+            self.passing[(ecosystem, name, version)] = published
 
     def save(self) -> None:
         if not self.directory:
@@ -186,13 +197,12 @@ class Registries:
     def published(self, package: Package) -> datetime:
         if package.published:
             return package.published
-        cached = self.cache.get(package)
-        if cached:
-            return cached
-        lookup = self.lookups.get(package.ecosystem)
-        if lookup is None:
-            raise Missing(f"unripe has no registry for {package.ecosystem}")
-        stamp = lookup(package)
+        stamp = self.cache.get(package)
+        if stamp is None:
+            lookup = self.lookups.get(package.ecosystem)
+            if lookup is None:
+                raise Missing(f"unripe has no registry for {package.ecosystem}")
+            stamp = lookup(package)
         self.cache.put(package.ecosystem, package.name, package.version, stamp)
         return stamp
 
@@ -211,7 +221,7 @@ class Registries:
                 return cached
             times = fetchall()
             for version, stamp in times.items():
-                self.cache.put(package.ecosystem, package.name, version, stamp)
+                self.cache.learn(package.ecosystem, package.name, version, stamp)
             if package.version not in times:
                 raise Missing(f"{package} is not in the registry")
             return times[package.version]

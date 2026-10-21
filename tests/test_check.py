@@ -224,3 +224,24 @@ def test_scan_is_the_library_entry_point(fake, tmp_path):
     (tmp_path / "Cargo.lock").write_text("[[broken")
     with pytest.raises(Problem, match="Cargo.lock"):
         unripe.scan([str(tmp_path)])
+
+
+@pytest.mark.parametrize(
+    "lockfile, ecosystem, name, version, text",
+    [
+        # the PATH section's `rack (>= 2)` constraint comes first and is not the lock
+        ("ruby/Gemfile.lock", "rubygems", "rack", "3.0.9", "    rack (3.0.9)"),
+        # composer.lock keeps the v that unripe drops
+        ("composer/composer.lock", "composer", "old/no-zone", "1.0.0", '            "name": "old/no-zone",'),
+        ("pnpm-v6/pnpm-lock.yaml", "npm", "react", "18.2.0", "  /react@18.2.0:"),
+        ("go/go.mod", "go", "github.com/pkg/errors", "v0.9.1", "require github.com/pkg/errors v0.9.1 // indirect"),
+        ("npm-v3/package-lock.json", "npm", "ms", "2.1.2", '    "node_modules/is-number/node_modules/ms": {'),
+    ],
+)
+def test_line_points_at_the_locked_entry(lockfile, ecosystem, name, version, text):
+    from unripe.check import line
+    from unripe.model import Package
+
+    rows = (TESTDATA / lockfile).read_text("utf-8").splitlines()
+    number = line([row.lower() for row in rows], Package(ecosystem, name, version))
+    assert rows[number - 1] == text
