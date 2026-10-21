@@ -231,6 +231,7 @@ older than that, unripe goes by first appearance. For recent versions the
 estimate is within minutes; for old ones, where it can't narrow things down,
 it uses the youngest age it can't rule out. `GOSUMDB`, `GONOSUMDB` and
 `GOPRIVATE` are honoured, and private modules fall back to the commit time.
+[docs/go.md](docs/go.md) explains how it works.
 
 `uv.lock` and `composer.lock` carry publish times themselves and unripe
 trusts them. Someone who can edit your lockfile can change those times, but
