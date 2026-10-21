@@ -1,5 +1,9 @@
 # unripe
 
+[![PyPI](https://img.shields.io/pypi/v/unripe)](https://pypi.org/project/unripe/)
+[![CI](https://github.com/TexWoW/unripe/actions/workflows/ci.yml/badge.svg)](https://github.com/TexWoW/unripe/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 unripe checks your lockfiles and fails if any dependency version was
 published too recently. The default is 3 days. It works across npm, pnpm,
 yarn, bun, PyPI, Cargo, Go, Composer and RubyGems, so a repo with a Python
@@ -37,12 +41,12 @@ somewhere between
 [40 minutes and three hours](https://docs.litellm.ai/blog/security-update-march-2026).
 Waiting a few days before taking a new version would have skipped both.
 
-npm, pnpm, yarn, bun and uv have each added a setting for this in the last
-year or so, and if you use one of them you should turn it on. unripe is for
-what those settings don't do. It checks what is already in the lockfile,
-including whatever a bot or an old tool put there. It reports on just the
-versions a pull request adds. And it covers Go, Composer and RubyGems, which
-have no setting of their own.
+Most package managers have added a setting for this in the last year, and
+if yours has one you should turn it on. unripe is for what those settings
+don't do. It checks what is already in the lockfile, including whatever a bot
+or an old tool put there. It reports on just the versions a pull request
+adds. It applies one policy to every ecosystem in the repo. And it covers Go
+and Composer, which don't have a setting yet.
 
 ## Install
 
@@ -229,18 +233,30 @@ unripe tries to defend against.
 
 ## Next to the built-in settings
 
+As of October 2026:
+
 | | Setting |
 |---|---|
 | npm 11.10+ | `min-release-age` in `.npmrc`, in days |
-| pnpm 10.16+ | `minimumReleaseAge` in `pnpm-workspace.yaml`, in minutes |
+| pnpm 10.16+ | `minimumReleaseAge` in `pnpm-workspace.yaml`, in minutes (on by default since pnpm 11) |
 | yarn 4.10+ | `npmMinimalAgeGate` in `.yarnrc.yml` |
 | bun 1.3+ | `minimumReleaseAge` in `bunfig.toml`, in seconds |
 | uv | `exclude-newer`, a date or a duration like `7d` |
-| Cargo, Go, Composer, Bundler | nothing built in as of October 2026 |
+| pip 26.1+ | `--uploaded-prior-to P3D` |
+| Bundler 4.0.13+ | `bundle config set cooldown 3`, in days |
+| Hex 2.5.0+ | `mix hex.config cooldown 3d` |
+| Cargo | unstable `-Zmin-publish-age` now, expected stable in Rust 1.100 |
+| Composer | proposed for 2.11 |
+| Go, NuGet, Maven, Gradle | nothing yet |
 
 These stop a new version at install time, which unripe can't do, so use
 them where you can. unripe is the check in CI afterwards: one policy for the
-whole repo, run against what actually got locked.
+whole repo, run against what actually got locked. One more difference: some
+of the built-in settings let a version through when they can't find its
+publish date. unripe fails instead.
+
+[cooldowns.dev](https://cooldowns.dev) keeps a longer, up to date list of
+these settings, with examples.
 
 ## Using it from Python
 
@@ -272,6 +288,12 @@ different things, so run both.
 **Is it slow?** The first run on a big repo takes a while. Twenty real
 lockfiles with about 7,800 versions between them took 82 seconds cold and
 1 second after that.
+
+## Contributing
+
+Bug reports and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md)
+explains how to run the tests and how to add a new ecosystem, which is the
+most useful thing anyone could add right now.
 
 ## License
 

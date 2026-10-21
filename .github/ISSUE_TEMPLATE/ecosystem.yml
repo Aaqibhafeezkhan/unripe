@@ -1,0 +1,18 @@
+name: Support a new lockfile or registry
+description: Ask for a lockfile format or package registry unripe doesn't read yet
+labels: [ecosystem]
+body:
+  - type: input
+    attributes:
+      label: Lockfile
+      description: The file name, like packages.lock.json.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Registry
+      description: Where publish times can be looked up, if you know.
+  - type: textarea
+    attributes:
+      label: Example
+      description: A link to a real public repo that has this lockfile.

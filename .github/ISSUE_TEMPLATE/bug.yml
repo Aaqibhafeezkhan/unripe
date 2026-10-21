@@ -1,0 +1,22 @@
+name: Bug
+description: unripe did something wrong
+body:
+  - type: textarea
+    attributes:
+      label: What happened
+      description: The command you ran and what it printed. `--format json` output helps too.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Lockfile
+      description: Which lockfile, and a link to it if it's public.
+  - type: input
+    attributes:
+      label: Version
+      description: The output of `unripe --version`.
