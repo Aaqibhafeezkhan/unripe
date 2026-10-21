@@ -1,88 +1,87 @@
 # unripe
 
-Fail the build when a locked dependency version is younger than you trust.
+unripe checks your lockfiles and fails if any dependency version was
+published too recently. The default is 3 days. It works across npm, pnpm,
+yarn, bun, PyPI, Cargo, Go, Composer and RubyGems, so a repo with a Python
+backend and a JavaScript frontend gets one check and one policy instead of
+five different settings.
 
-unripe reads every lockfile in a repository, asks each package registry when
-every locked version was published, and fails when any of them is newer than
-your policy (3 days by default). One command and one policy for npm, pnpm,
-yarn, bun, PyPI, Cargo, Go, Composer and RubyGems.
+Here it is on Discourse's `Gemfile.lock`, the evening of October 20, 2026:
 
 ```
-$ uvx unripe check
-unripe: checked 412 versions in 3 lockfiles, minimum age 3d
+$ unripe check
+unripe: checked 339 versions in 1 lockfile, minimum age 3d
 
-unripe: 1 version published less than 3d ago
-  npm      keyv 6.0.0  5h old, published 2026-08-04 09:12 UTC, old enough at 2026-08-07 09:12 UTC
-           web/package-lock.json:2214
+unripe: 2 versions published less than 3d ago
+  rubygems aws-sdk-core 3.259.0  7h old, published 2026-10-20 19:21 UTC, old enough at 2026-10-23 19:21 UTC
+           Gemfile.lock:1014
+  rubygems logster 3.0.0         35h old, published 2026-10-19 15:32 UTC, old enough at 2026-10-22 15:32 UTC
+           Gemfile.lock:1126
 
-fail: 1 unripe, 0 unknown, 411 ok, 0 excluded
+fail: 2 unripe, 0 unknown, 337 ok, 0 excluded
 ```
 
-## Why
+Nothing is wrong with either of those gems. That's normal. Most new
+versions are fine. The point is that when one isn't, you find out after
+everyone else does, not before.
 
-Malicious releases are usually found and pulled within hours or days. If you
-never install a version until it has been public for a few days, most of them
-never reach you.
+## Why bother
 
-- In August 2026 a self-spreading npm worm published malicious versions of
-  [444 packages](https://cybernews.com/security/npm-supply-chain-attack-shai-hulud-worm/)
-  in a few hours, starting with `keyv@6.0.0`, and stole CI and cloud
-  credentials from anyone who installed them.
-- In March 2026 two backdoored LiteLLM releases (1.82.7 and 1.82.8)
-  [were on PyPI](https://docs.litellm.ai/blog/security-update-march-2026)
-  for between 40 minutes and three hours, depending on who you ask, before
-  they were quarantined.
+When a popular package gets hijacked, the bad version is usually spotted
+and pulled within hours. In August 2026 a worm went through npm and
+published malicious versions of
+[444 packages](https://cybernews.com/security/npm-supply-chain-attack-shai-hulud-worm/)
+in about four hours, stealing CI and cloud credentials from whoever
+installed them. In March, two backdoored LiteLLM releases sat on PyPI for
+somewhere between
+[40 minutes and three hours](https://docs.litellm.ai/blog/security-update-march-2026).
+Waiting a few days before taking a new version would have skipped both.
 
-Both were caught fast. A 3 day wait would have skipped both.
-
-Package managers have started adding their own "minimum release age"
-settings, under different names and units, and several ecosystems have none.
-unripe is for the parts they do not cover:
-
-- one policy across a repository that mixes ecosystems
-- versions already pinned in a lockfile, not only new installs
-- a report for pull requests that only looks at versions the PR adds
-- Go, Composer and RubyGems, which have no setting of their own
+npm, pnpm, yarn, bun and uv have each added a setting for this in the last
+year or so, and if you use one of them you should turn it on. unripe is for
+what those settings don't do. It checks what is already in the lockfile,
+including whatever a bot or an old tool put there. It reports on just the
+versions a pull request adds. And it covers Go, Composer and RubyGems, which
+have no setting of their own.
 
 ## Install
 
-unripe needs Python 3.11 or later and has no dependencies of its own. A tool
-that checks your supply chain should not bring one.
+You need Python 3.11 or newer. unripe has no dependencies, on purpose: a
+tool that checks your supply chain shouldn't add to it.
 
 ```
-uvx unripe check          # run without installing
-pipx install unripe       # or install it
-pip install unripe
+uvx unripe check
 ```
 
-## What it reads
+or `pipx install unripe`, or `pip install unripe`.
 
-| Lockfile | Asks |
+## Lockfiles it reads
+
+| File | Publish times come from |
 |---|---|
-| `package-lock.json`, `npm-shrinkwrap.json` (v1 to v3) | npm registry |
-| `pnpm-lock.yaml` (v5 to v9) | npm registry |
-| `yarn.lock` (yarn 1 and yarn 2+) | npm registry |
+| `package-lock.json`, `npm-shrinkwrap.json` | npm registry |
+| `pnpm-lock.yaml` | npm registry |
+| `yarn.lock` (classic and berry) | npm registry |
 | `bun.lock` | npm registry |
-| `uv.lock` | its own upload times, else PyPI |
+| `uv.lock` | the lockfile's own upload times |
 | `poetry.lock`, `Pipfile.lock` | PyPI |
-| `requirements*.txt`, `constraints*.txt` (exact `==` pins only) | PyPI |
+| `requirements*.txt`, `constraints*.txt` | PyPI (exact `==` pins only) |
 | `Cargo.lock` | crates.io sparse index |
-| `go.mod` | Go module proxy (`GOPROXY` is honoured) |
-| `composer.lock` | its own `time` field, else Packagist |
+| `go.mod` | Go module proxy, honouring `GOPROXY` |
+| `composer.lock` | the lockfile's own `time` field, else Packagist |
 | `Gemfile.lock` | rubygems.org |
 
-Git, path, workspace and file dependencies are skipped, since there is no
-registry to ask about them. So are packages from another registry, such as a
-private index in `uv.lock` or a second `GEM` remote. `bun.lockb` is binary
-and is reported as unreadable: bun 1.2 and later write a text `bun.lock`.
+Dependencies from git, a local path, a workspace or another registry are
+skipped, since there's nothing public to ask about them. The old binary
+`bun.lockb` can't be read; bun 1.2 and later write a text `bun.lock`.
 
-`go.mod` is read rather than `go.sum`, because since Go 1.17 `go.mod` lists
-every module in the build, while `go.sum` also keeps versions that are never
-built.
+For Go it reads `go.mod`, not `go.sum`. Since Go 1.17, `go.mod` lists every
+module in the build, while `go.sum` also remembers versions that aren't used.
 
-## GitHub Action
+## In GitHub Actions
 
 ```yaml
+name: unripe
 on: pull_request
 
 permissions:
@@ -93,32 +92,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: TexWoW/unripe@v0.1.0  # better: pin the full commit sha
+      - uses: TexWoW/unripe@v0.1.0
         with:
           min-age: 3d
 ```
 
-On a pull request the action only checks versions the pull request adds (it
-compares against the base commit, fetching it if the checkout is shallow), and
-writes a report to the job summary. On a push it checks everything.
+On a pull request it only looks at versions the PR adds, compared with the
+base commit. It fetches that commit if the checkout is shallow, so you don't
+need `fetch-depth: 0`. On a push it checks everything. The report goes to the
+job summary.
+
+Pin the action to a full commit sha rather than a tag if you can. The action
+runs unripe from its own checkout, so the code that runs is the commit you
+pinned, and nothing gets downloaded from PyPI.
+
+Inputs:
 
 | Input | Default | |
 |---|---|---|
-| `min-age` | `3d` | how old every version must be: `90m`, `72h`, `3d`, `1w` |
-| `since` | the PR base | a git ref; `none` checks everything |
-| `paths` | whole repository | lockfiles or directories, separated by spaces or new lines |
-| `exclude` | | one pattern per line, see [Excluding packages](#excluding-packages) |
-| `unknown` | `fail` | `warn` lets versions whose age is unknown pass |
-| `summary` | `true` | write the markdown report to the job summary |
+| `min-age` | `3d` | `90m`, `72h`, `3d`, `1w` |
+| `since` | PR base | a git ref, or `none` to check everything |
+| `paths` | whole repo | files or directories, space or newline separated |
+| `exclude` | | patterns, one per line |
+| `unknown` | `fail` | set to `warn` to let unknown ages pass |
+| `summary` | `true` | write the job summary |
 | `sarif` | | also write SARIF to this path |
-| `config` | | a config file other than `.unripe.toml` or `pyproject.toml` |
+| `config` | | a config file other than the defaults |
 
-The action runs unripe straight from its own checkout, so the code that runs
-is exactly the commit you pinned, and nothing is downloaded from PyPI. It uses
-[astral-sh/setup-uv](https://github.com/astral-sh/setup-uv) (pinned by commit)
-to get a Python.
-
-To see problems as code scanning alerts on the lockfile lines:
+If you want the results as code scanning alerts on the lockfile lines, write
+SARIF and upload it (this needs `security-events: write`):
 
 ```yaml
       - uses: TexWoW/unripe@v0.1.0
@@ -130,9 +132,7 @@ To see problems as code scanning alerts on the lockfile lines:
           sarif_file: unripe.sarif
 ```
 
-(this needs `security-events: write` permission).
-
-## pre-commit
+## As a pre-commit hook
 
 ```yaml
 repos:
@@ -140,157 +140,138 @@ repos:
     rev: v0.1.0
     hooks:
       - id: unripe
-        # args: [--since, HEAD]   # only check versions this commit adds
 ```
 
-The hook runs when a lockfile changes and checks that lockfile.
+It runs when a lockfile changes. Add `args: [--since, HEAD]` if you only
+want it to look at what the commit adds.
 
 ## Configuration
 
-Settings go in `.unripe.toml`, or in `[tool.unripe]` in `pyproject.toml`.
-Command line options win over the file, and excludes from both apply.
+Put settings in `.unripe.toml`, or under `[tool.unripe]` in
+`pyproject.toml`. Flags on the command line win. Excludes from both are
+combined.
 
 ```toml
-# .unripe.toml
-min-age = "3d"          # 90m, 72h, 3d, 1w; a bare number means days
-unknown = "fail"        # or "warn"
-paths = ["web", "api"]  # where to look when no paths are given
+min-age = "3d"
+unknown = "fail"
+paths = ["web", "api"]
 exclude = [
-  "npm:@myorg/*",       # our own packages, published by our own CI
-  "left-pad@1.3.0",     # one version we checked by hand
+  "npm:@myorg/*",
+  "left-pad@1.3.0",
 ]
 ```
 
-### Excluding packages
-
-A pattern is a package name or a glob, matched against the name as the
-registry spells it.
-
-- `left-pad`: this package in any ecosystem
-- `npm:@types/*`: only in one ecosystem (`npm`, `pypi`, `cargo`, `go`, `composer`, `rubygems`)
-- `left-pad@1.3.0`, `@types/node@20.*`: only matching versions
-- `golang.org/x/*`: globs work for any name
-
-PyPI names are compared the way PyPI compares them, so `Typing_Extensions`
-matches `typing-extensions`.
+An exclude is a package name or a glob. Prefix it with an ecosystem
+(`npm:`, `pypi:`, `cargo:`, `go:`, `composer:`, `rubygems:`) to limit it to
+one, and add `@version` to limit it to certain versions, like
+`@types/node@20.*`. PyPI names are normalised the way PyPI does it, so
+`Typing_Extensions` and `typing-extensions` are the same package.
 
 ## Command line
 
 ```
-unripe check [paths...]   check lockfiles in these files and directories (default: .)
-  --min-age AGE           how old a version must be (default 3d)
-  --since REF             only check versions added since this git ref
-  --exclude PATTERN       skip matching packages; repeatable
-  --unknown fail|warn     what an unknown publish time does (default fail)
-  --format FORMAT         text, json, sarif or markdown (default text)
-  --output FILE           write the report to a file instead of stdout
-  --summary FILE          also append a markdown report, like $GITHUB_STEP_SUMMARY
-  --sarif FILE            also write a SARIF report
-  --config FILE           read this config file
-  --no-cache              ask the registries again
-  --verbose               list the versions that passed too
+unripe check [paths...]
+  --min-age AGE         default 3d
+  --since REF           only versions added since this git ref
+  --exclude PATTERN     can be repeated
+  --unknown fail|warn   default fail
+  --format FORMAT       text, json, sarif or markdown
+  --output FILE         write the report here instead of stdout
+  --summary FILE        also append a markdown report, e.g. $GITHUB_STEP_SUMMARY
+  --sarif FILE          also write a SARIF report
+  --config FILE
+  --no-cache
+  --verbose             list the versions that passed too
 
 unripe explain ECOSYSTEM NAME VERSION
-                          say when one version was published and whether it passes
 ```
 
-`unripe` on its own means `unripe check`.
+`unripe` with no command runs `unripe check`. It exits 0 when everything is
+old enough, 1 when something is too new or has an unknown age, and 2 when a
+lockfile can't be read, no lockfile was found, or an option is wrong.
 
-Exit codes:
+`explain` is handy for a single question:
 
-- `0`: every version is old enough
-- `1`: a version is too new, or its age is unknown (unless `--unknown warn`)
-- `2`: a lockfile could not be read, no lockfile was found, or the options were wrong
+```
+$ unripe explain npm left-pad 1.3.0
+npm left-pad 1.3.0: published 2018-04-09 01:10 UTC, 8y ago
+old enough: the minimum age is 3d
+```
 
-## How it decides
+## Details worth knowing
 
-Each locked version ends up in one of four states:
+If a registry can't tell unripe when a version was published, because it's
+down or rate limiting or has never heard of the version, that version counts
+as unknown, and unknown fails. A check that quietly passes when the registry
+is unreachable is one an attacker can turn off. Use `--unknown warn` if you'd
+rather not.
 
-- **ok**: published at least `min-age` ago
-- **unripe**: published more recently
-- **unknown**: the registry could not say, because it was down, rate limited, or
-  does not have that version. Unknown fails by default. A check that passes
-  when the registry is unreachable is a check an attacker can switch off.
-- **excluded**: matched an exclude pattern, so it was not looked up
+Publish times never change, so answers are cached on disk forever, in
+`~/.cache/unripe` (`%LOCALAPPDATA%\unripe\cache` on Windows), or wherever
+`UNRIPE_CACHE` points. A second run on the same lockfiles makes no requests
+at all. Each version is looked up once even if several lockfiles have it,
+and lookups run 16 at a time. For npm, Cargo, Composer and RubyGems one
+request covers every version of a package.
 
-A version that is in two lockfiles is looked up once. Lookups run 16 at a
-time. Publish times never change, so every answer is cached on disk for good
-(`~/.cache/unripe`, `%LOCALAPPDATA%\unripe\cache` on Windows, or
-`$UNRIPE_CACHE`), and a second run on the same lockfiles asks nothing.
+Mirrors work through `UNRIPE_NPM_REGISTRY` and `UNRIPE_PYPI_URL`. For Go,
+unripe uses the first proxy in `GOPROXY`.
 
-To use a mirror, set `UNRIPE_NPM_REGISTRY` or `UNRIPE_PYPI_URL`. Go lookups
-use the first proxy in `GOPROXY`.
+The Go check is weaker than the rest. The module proxy reports a version's
+commit time, not when it was first published, so a tag pushed today on an
+older commit looks old, and git lets anyone set any commit time. I haven't
+found a public record of when the proxy first saw a version that could be
+used instead.
 
-For Go, the module proxy only reports a version's commit time, not when the
-version was first published. A tag made today on an older commit looks as old
-as the commit, and git lets an author set any commit time. There is no public
-record of when the proxy first saw a version that unripe can look up, so for Go
-modules the check is weaker than for the other ecosystems.
+`uv.lock` and `composer.lock` carry publish times themselves and unripe
+trusts them. Someone who can edit your lockfile can change those times, but
+they could also point it at any package they like, so that isn't something
+unripe tries to defend against.
 
-`uv.lock` and `composer.lock` record publish times themselves, and unripe uses
-them. Someone who can edit your lockfile can change those times, but someone
-who can edit your lockfile can also point it at any package they like, so
-unripe does not try to defend against that.
-
-## How it compares to native settings
-
-Several package managers now have a setting that refuses new versions at
-install time. If your repository uses one package manager that has one, turn
-it on: it stops a new version before it is installed, which unripe cannot do.
+## Next to the built-in settings
 
 | | Setting |
 |---|---|
-| npm 11.10+ | `min-release-age` in `.npmrc` (days) |
-| pnpm 10.16+ | `minimumReleaseAge` in `pnpm-workspace.yaml` (minutes) |
+| npm 11.10+ | `min-release-age` in `.npmrc`, in days |
+| pnpm 10.16+ | `minimumReleaseAge` in `pnpm-workspace.yaml`, in minutes |
 | yarn 4.10+ | `npmMinimalAgeGate` in `.yarnrc.yml` |
-| bun 1.3+ | `minimumReleaseAge` in `bunfig.toml` (seconds) |
-| uv | `exclude-newer` (a date, or a duration like `7d` in recent versions) |
-| Cargo, Go, Composer, Bundler | none built in at the time of writing |
+| bun 1.3+ | `minimumReleaseAge` in `bunfig.toml`, in seconds |
+| uv | `exclude-newer`, a date or a duration like `7d` |
+| Cargo, Go, Composer, Bundler | nothing built in as of October 2026 |
 
-What unripe adds:
+These stop a new version at install time, which unripe can't do, so use
+them where you can. unripe is the check in CI afterwards: one policy for the
+whole repo, run against what actually got locked.
 
-- the same policy, in the same words, across every ecosystem in the repository
-- a check of what is already in the lockfile, whoever or whatever wrote it
-  (a bot, an older tool, a hand edit)
-- a pull request report limited to what the pull request adds, as text,
-  markdown, JSON or SARIF
-- coverage for Go, Composer and RubyGems
-
-They work well together: the native setting stops the install, unripe checks
-the result in CI.
-
-## Library use
+## Using it from Python
 
 ```python
 import unripe
 
 for finding in unripe.scan(["."], min_age="3d", exclude=["npm:@myorg/*"]):
     if finding.state != "ok":
-        print(finding.package.ecosystem, finding.package, finding.state, finding.reason)
+        print(finding.package, finding.state, finding.reason)
 ```
 
-`scan()` raises `unripe.check.Problem` when a lockfile cannot be read or a
-`since` ref does not exist.
+Each finding's state is `ok`, `unripe`, `unknown` or `excluded`. `scan()`
+raises `unripe.check.Problem` if a lockfile can't be read or the `since` ref
+doesn't exist.
 
-## FAQ
+## Questions
 
-**Our own packages are always new.** Exclude them: `npm:@myorg/*`.
+**Our own packages are always new.** Exclude them, e.g. `npm:@myorg/*`.
 
-**We use a private registry.** Packages unripe cannot find are unknown, which
-fails. Exclude them, or run with `--unknown warn`. For private Go modules,
-point `GOPROXY` at your proxy or exclude them.
+**We use a private registry.** unripe can't see into it, so those packages
+come back unknown. Exclude them, or use `--unknown warn`. For private Go
+modules, point `GOPROXY` at your own proxy.
 
-**Is this a replacement for an audit tool?** No. Audit tools know about
-published advisories. unripe knows nothing about any package; it only refuses
-to trust a version before the world has had a few days to look at it. Use
-both.
+**Does this replace `npm audit` or similar?** No. Audit tools know about
+reported vulnerabilities. unripe doesn't know anything about any package. It
+just won't trust a version until it has been around for a while. They catch
+different things, so run both.
 
-**How much does it ask the registries?** Once per package for npm, Cargo,
-Composer and RubyGems (one answer covers every version), once per version for
-PyPI and Go, and never again after that. crates.io lookups use the sparse
-index on its CDN, as crates.io asks tools to.
-
-**Does it need network access?** Yes, the first time it sees a version.
+**Is it slow?** The first run on a big repo takes a while. Twenty real
+lockfiles with about 7,800 versions between them took 82 seconds cold and
+1 second after that.
 
 ## License
 
