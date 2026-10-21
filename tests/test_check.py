@@ -208,3 +208,19 @@ def test_since_works_in_a_subdirectory(fake, lookups, repo):
     fake.add("npm", "fresh", "2.0.0", timedelta(days=30))
     result = check([str(repo)], Policy(), lookups, since="HEAD", now=NOW)
     assert states(result) == {("fresh", "2.0.0"): "ok"}
+
+
+def test_scan_is_the_library_entry_point(fake, tmp_path):
+    from datetime import datetime, timezone
+
+    import unripe
+
+    fake.base = datetime.now(timezone.utc)
+    (tmp_path / "package-lock.json").write_text(LEFTPAD % FRESH)
+    fake.add("npm", "left-pad", "1.3.0")
+    fake.add("npm", "fresh", "2.0.0", timedelta(hours=1))
+    findings = unripe.scan([str(tmp_path)], min_age="3d", exclude=["left-pad"], cache=False)
+    assert {(f.package.name, f.state) for f in findings} == {("fresh", "unripe"), ("left-pad", "excluded")}
+    (tmp_path / "Cargo.lock").write_text("[[broken")
+    with pytest.raises(Problem, match="Cargo.lock"):
+        unripe.scan([str(tmp_path)])
