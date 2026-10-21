@@ -10,6 +10,7 @@ A registry that cannot answer (down, rate limited, private package) is an
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import random
@@ -19,7 +20,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -121,6 +122,16 @@ class Cache:
                 table[f"{name}@{version}"] = value
                 self.dirty.add(ecosystem)
 
+    def recall(self, table: str, key: str) -> str | None:
+        with self.lock:
+            return self.table(table).get(key)
+
+    def note(self, table: str, key: str, value: str) -> None:
+        with self.lock:
+            if self.table(table).get(key) != value:
+                self.table(table)[key] = value
+                self.dirty.add(table)
+
     def learn(self, ecosystem: str, name: str, version: str, published: datetime) -> None:
         with self.lock:
             self.passing[(ecosystem, name, version)] = published
@@ -165,6 +176,116 @@ def goproxy() -> str:
     return "https://proxy.golang.org"
 
 
+def gosumdb(module: str) -> bool:
+    """Whether the public Go checksum database should be asked about a module, as the go command would."""
+    setting = (os.environ.get("GOSUMDB") or "sum.golang.org").strip()
+    if setting == "off" or not setting.startswith("sum.golang.org"):
+        return False
+    private = os.environ.get("GONOSUMDB") or os.environ.get("GOPRIVATE") or ""
+    for pattern in filter(None, (part.strip() for part in private.split(","))):
+        # like the go command: a pattern matches a path prefix with as many elements as it has
+        prefix = "/".join(module.split("/")[: pattern.count("/") + 1])
+        if fnmatch.fnmatchcase(prefix, pattern):
+            return False
+    return True
+
+
+class SumDB:
+    """
+    When a Go module version first appeared, from the public checksum database.
+
+    sum.golang.org gives every module version a record number, in the order it
+    first saw them, and nobody can change that order afterwards. It keeps no
+    times, but index.golang.org lists versions with the time the module proxy
+    first fetched them. Looking a few of those up gives record numbers at known
+    times, and a version's record number can be placed between them.
+
+    The record number at a past moment never changes, so calibration points are
+    cached like publish times. They sit on whole hours (whole days further back)
+    so that runs close together share them.
+    """
+
+    # hours back that calibration points sit at, newest first. dense in the
+    # first month, where policies live, because the database grows unevenly
+    LADDER = [1, 3, 6, 12, 24, 36, 48, 60, 72, 84, 96, 108, 120, 144, 168, 192, 216, 240, 264, 288, 336,
+              384, 432, 504, 600, 720, 1080, 1440, 2160, 2880, 4320, 6480, 8760]
+
+    def __init__(self, now: datetime, cache: Cache | None = None, url: str = "https://sum.golang.org", index: str = "https://index.golang.org/index"):
+        self.now = now.astimezone(timezone.utc)
+        self.cache = cache or Cache(None)
+        self.url = url
+        self.index = index
+        self.lock = threading.Lock()
+        hour = self.now.replace(minute=0, second=0, microsecond=0)
+        day = hour.replace(hour=0)
+        # on whole hours, and whole days further back, so runs close together share points
+        self.moments = [self.now] + [(hour if hours < 48 else day) - timedelta(hours=hours) for hours in self.LADDER]
+        self.numbers: dict[int, int] = {}
+
+    def record(self, module: str, version: str) -> int:
+        body = fetchtext(f"{self.url}/lookup/{goescape(module)}@{goescape(version)}")
+        try:
+            return int(body.splitlines()[0])
+        except (IndexError, ValueError) as error:
+            raise Unreachable(f"{self.url} answered a lookup in a form unripe does not know") from error
+
+    def latest(self) -> int:
+        lines = fetchtext(f"{self.url}/latest").splitlines()
+        try:
+            return int(lines[1])
+        except (IndexError, ValueError) as error:
+            raise Unreachable(f"{self.url} answered /latest in a form unripe does not know") from error
+
+    def seen(self, moment: datetime) -> int:
+        """The record number of the first version the proxy fetched at or after a moment."""
+        since = moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+        remembered = self.cache.recall("gosumdb", since)
+        if remembered is not None:
+            return int(remembered)
+        for line in fetchtext(f"{self.index}?since={since}&limit=20").splitlines():
+            try:
+                entry = json.loads(line)
+                number = self.record(entry["Path"], entry["Version"])
+            except (ValueError, KeyError, TypeError, Missing):
+                # a version the checksum database refused: try the next one
+                continue
+            self.cache.note("gosumdb", since, str(number))
+            return number
+        raise Unreachable(f"{self.index} gave nothing to calibrate against at {since}")
+
+    def point(self, rung: int) -> tuple[datetime, int]:
+        """The time and record number at one rung of the ladder; rung 0 is the database as it is now."""
+        with self.lock:
+            if rung not in self.numbers:
+                self.numbers[rung] = self.latest() if rung == 0 else self.seen(self.moments[rung])
+            return self.moments[rung], self.numbers[rung]
+
+    def first(self, record: int) -> tuple[datetime, datetime, datetime] | None:
+        """
+        When the version with this record number first appeared: the earliest
+        and latest it can have been, and a best guess. None if over a year ago.
+        Inside a narrow gap between two points the guess is interpolated; inside
+        a wide one it is the latest, the youngest the version could be.
+        """
+        # the newest rung the record is not older than, by binary search, since numbers fall as rungs go back
+        low, high = 1, len(self.moments) - 1
+        if record < self.point(high)[1]:
+            return None
+        while low < high:
+            middle = (low + high) // 2
+            if record >= self.point(middle)[1]:
+                high = middle
+            else:
+                low = middle + 1
+        older, newer = self.point(low), self.point(low - 1)
+        width = newer[0] - older[0]
+        if width > max(timedelta(days=1), (self.now - older[0]) * 0.1):
+            return older[0], newer[0], newer[0]
+        span = max(newer[1] - older[1], 1)
+        fraction = min(max((record - older[1]) / span, 0.0), 1.0)
+        return older[0], newer[0], older[0] + width * fraction
+
+
 def crateindex(name: str) -> str:
     """Where a crate lives in the sparse index: `se/rd/serde`, `3/s/syn`, `2/cc`, `1/a`."""
     name = name.lower()
@@ -178,8 +299,9 @@ def crateindex(name: str) -> str:
 class Registries:
     """Looks publish times up, through the cache. Thread-safe: unripe asks many at once."""
 
-    def __init__(self, cache: Cache, npmurl: str | None = None, pypiurl: str | None = None):
+    def __init__(self, cache: Cache, npmurl: str | None = None, pypiurl: str | None = None, now: datetime | None = None):
         self.cache = cache
+        self.sumdb = SumDB(now or datetime.now(timezone.utc), cache)
         self.npmurl = (npmurl or os.environ.get("UNRIPE_NPM_REGISTRY") or "https://registry.npmjs.org").rstrip("/")
         self.pypiurl = (pypiurl or os.environ.get("UNRIPE_PYPI_URL") or "https://pypi.org").rstrip("/")
         self.lookups: dict[str, Callable[[Package], datetime]] = {
@@ -271,7 +393,23 @@ class Registries:
         data = fetch(f"{goproxy()}/{goescape(package.name)}/@v/{goescape(package.version)}.info")
         if not isinstance(data, dict) or not data.get("Time"):
             raise Missing(f"{package} has no time in the module proxy")
-        return when(data["Time"])
+        # the proxy's time is the commit's, which the author chooses
+        committed = when(data["Time"])
+        if not gosumdb(package.name):
+            return committed
+        try:
+            record = self.sumdb.record(package.name, package.version)
+        except Missing:
+            # not in the public checksum database (a private module, say): the commit time is all there is
+            return committed
+        window = self.sumdb.first(record)
+        if window is None:
+            return committed
+        earliest, _, guess = window
+        # a commit inside the window is the usual case, a version tagged soon after it was made.
+        # a commit from before the window is the one to distrust: an old commit tagged
+        # recently, or a commit time set back on purpose
+        return committed if committed >= earliest else guess
 
     def composer(self, package: Package) -> datetime:
         def fetchall() -> dict[str, datetime]:

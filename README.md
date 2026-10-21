@@ -71,7 +71,7 @@ or `pipx install unripe`, or `pip install unripe`.
 | `poetry.lock`, `Pipfile.lock` | PyPI |
 | `requirements*.txt`, `constraints*.txt` | PyPI (exact `==` pins only) |
 | `Cargo.lock` | crates.io sparse index |
-| `go.mod` | Go module proxy, honouring `GOPROXY` |
+| `go.mod` | Go module proxy and checksum database |
 | `composer.lock` | the lockfile's own `time` field, else Packagist |
 | `Gemfile.lock` | rubygems.org |
 
@@ -96,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: TexWoW/unripe@v0.1.0
+      - uses: TexWoW/unripe@v0.2.0
         with:
           min-age: 3d
 ```
@@ -127,7 +127,7 @@ If you want the results as code scanning alerts on the lockfile lines, write
 SARIF and upload it (this needs `security-events: write`):
 
 ```yaml
-      - uses: TexWoW/unripe@v0.1.0
+      - uses: TexWoW/unripe@v0.2.0
         with:
           sarif: unripe.sarif
       - uses: github/codeql-action/upload-sarif@v4
@@ -141,7 +141,7 @@ SARIF and upload it (this needs `security-events: write`):
 ```yaml
 repos:
   - repo: https://github.com/TexWoW/unripe
-    rev: v0.1.0
+    rev: v0.2.0
     hooks:
       - id: unripe
 ```
@@ -220,11 +220,17 @@ request covers every version of a package.
 Mirrors work through `UNRIPE_NPM_REGISTRY` and `UNRIPE_PYPI_URL`. For Go,
 unripe uses the first proxy in `GOPROXY`.
 
-The Go check is weaker than the rest. The module proxy reports a version's
-commit time, not when it was first published, so a tag pushed today on an
-older commit looks old, and git lets anyone set any commit time. I haven't
-found a public record of when the proxy first saw a version that could be
-used instead.
+Go needed extra work. The module proxy only reports a version's commit
+time, and a commit time is whatever the author says it is, so a tag pushed
+today on an old commit (or a commit dated last year on purpose) would look
+old. So unripe also asks Go's checksum database, sum.golang.org, which gives
+every module version a number in the order it first saw them and can't be
+rewritten. Placing that number against the timeline of the Go module index
+says roughly when the version first appeared. If the commit claims to be
+older than that, unripe goes by first appearance. For recent versions the
+estimate is within minutes; for old ones, where it can't narrow things down,
+it uses the youngest age it can't rule out. `GOSUMDB`, `GONOSUMDB` and
+`GOPRIVATE` are honoured, and private modules fall back to the commit time.
 
 `uv.lock` and `composer.lock` carry publish times themselves and unripe
 trusts them. Someone who can edit your lockfile can change those times, but

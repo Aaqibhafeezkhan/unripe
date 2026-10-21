@@ -18,6 +18,12 @@ from unripe.registries import Cache, Missing, Registries, Unreachable
 
 TESTDATA = Path(__file__).parent / "testdata"
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+# the fake checksum database numbers one record per second from here
+EPOCH = datetime(2015, 1, 1, tzinfo=timezone.utc)
+
+
+def record(moment: datetime) -> int:
+    return int((moment - EPOCH).total_seconds())
 
 
 def iso(moment: datetime) -> str:
@@ -31,10 +37,15 @@ class FakeRegistry:
         self.urls: list[str] = []
         # ages are measured back from here; the cli tests move it to the real clock
         self.base = NOW
+        # when the go checksum database first saw a module version
+        self.sumdb: dict[tuple[str, str], datetime] = {}
 
-    def add(self, ecosystem: str, name: str, version: str, age: timedelta | None = None, at: datetime | None = None) -> datetime:
+    def add(self, ecosystem: str, name: str, version: str, age: timedelta | None = None, at: datetime | None = None, seen: timedelta | None = None) -> datetime:
+        """A version published `age` ago. For go, `seen` is how long ago the checksum database first saw it (default: then too)."""
         moment = at or self.base - (age if age is not None else timedelta(days=400))
         self.times.setdefault((ecosystem, name), {})[version] = moment
+        if ecosystem == "go":
+            self.sumdb[(name, version)] = self.base - seen if seen is not None else moment
         return moment
 
     def versions(self, ecosystem: str, name: str) -> dict[str, datetime]:
@@ -47,7 +58,27 @@ class FakeRegistry:
 
     def fetchtext(self, url: str, accept: str = "*/*") -> str:
         self.urls.append(url)
-        return json.dumps(self.answer(url)) if not url.startswith("https://index.crates.io/") else self.crates(url)
+        if url.startswith("https://index.crates.io/"):
+            return self.crates(url)
+        if url.startswith("https://sum.golang.org/"):
+            return self.checksums(url)
+        return json.dumps(self.answer(url))
+
+    def checksums(self, url: str) -> str:
+        if "sumdb" in self.down:
+            raise Unreachable("sum.golang.org: HTTP 503")
+        path = urllib.parse.urlsplit(url).path
+        if path == "/latest":
+            return "\n".join(["go.sum database tree", str(record(self.base)), "AAAA=", "", "- sum.golang.org signature", ""])
+        unescape = lambda text: re.sub(r"!([a-z])", lambda m: m.group(1).upper(), text)  # noqa: E731
+        module, _, version = unescape(path.removeprefix("/lookup/")).rpartition("@")
+        if module == "index.example/filler":
+            number = int(version.rsplit("-", 1)[1])
+        elif (module, version) in self.sumdb:
+            number = record(self.sumdb[(module, version)])
+        else:
+            raise Missing(url)
+        return "\n".join([str(number), f"{module} {version} h1:AAAA=", f"{module} {version}/go.mod h1:AAAA=", "", "go.sum database tree", ""])
 
     def answer(self, url: str):
         parsed = urllib.parse.urlsplit(url)
@@ -77,6 +108,11 @@ class FakeRegistry:
             if moment is None:
                 raise Missing(url)
             return {"Version": unescape(match.group(2)), "Time": moment.strftime("%Y-%m-%dT%H:%M:%SZ")}
+        if parsed.netloc == "index.golang.org":
+            if "sumdb" in self.down:
+                raise Unreachable("index: HTTP 429")
+            since = datetime.fromisoformat(urllib.parse.parse_qs(parsed.query)["since"][0].replace("Z", "+00:00"))
+            return {"Path": "index.example/filler", "Version": f"v0.0.0-{record(since)}", "Timestamp": iso(since)}
         if parsed.netloc == "repo.packagist.org":
             name = re.fullmatch(r"/p2/(.+)\.json", path).group(1)
             entries = []
@@ -109,7 +145,8 @@ class FakeRegistry:
 def fake(monkeypatch) -> FakeRegistry:
     registry = FakeRegistry()
     monkeypatch.setattr(registries, "fetchtext", registry.fetchtext)
-    monkeypatch.delenv("GOPROXY", raising=False)
+    for name in ("GOPROXY", "GOSUMDB", "GONOSUMDB", "GOPRIVATE"):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("UNRIPE_NPM_REGISTRY", raising=False)
     monkeypatch.delenv("UNRIPE_PYPI_URL", raising=False)
     return registry
@@ -117,8 +154,8 @@ def fake(monkeypatch) -> FakeRegistry:
 
 @pytest.fixture
 def lookups(fake) -> Registries:
-    """Registries backed by the fake, with an in-memory cache."""
-    return Registries(Cache(None))
+    """Registries backed by the fake, with an in-memory cache, on the fake's clock."""
+    return Registries(Cache(None), now=NOW)
 
 
 @pytest.fixture(autouse=True)

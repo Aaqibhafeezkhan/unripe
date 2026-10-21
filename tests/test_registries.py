@@ -8,7 +8,7 @@ import pytest
 from conftest import NOW
 from unripe import registries
 from unripe.model import Package
-from unripe.registries import Cache, Missing, Registries, Unreachable, crateindex, goescape, goproxy
+from unripe.registries import Cache, Missing, Registries, Unreachable, crateindex, goescape, goproxy, gosumdb
 
 
 @pytest.mark.parametrize(
@@ -64,7 +64,8 @@ def test_crate_index_paths(name, path):
 def test_go_escapes_capitals(fake, lookups):
     fake.add("go", "github.com/BurntSushi/toml", "v1.3.2")
     lookups.published(Package("go", "github.com/BurntSushi/toml", "v1.3.2"))
-    assert fake.urls == ["https://proxy.golang.org/github.com/!burnt!sushi/toml/@v/v1.3.2.info"]
+    assert fake.urls[0] == "https://proxy.golang.org/github.com/!burnt!sushi/toml/@v/v1.3.2.info"
+    assert "https://sum.golang.org/lookup/github.com/!burnt!sushi/toml@v1.3.2" in fake.urls
     assert goescape("github.com/Azure/Go") == "github.com/!azure/!go"
 
 
@@ -236,3 +237,86 @@ def test_an_unchanged_cache_is_not_rewritten(fake, tmp_path):
     second = Registries(Cache(tmp_path))
     second.published(Package("npm", "ms", "2.1.3"))
     assert second.cache.dirty == set()
+
+
+def test_go_distrusts_a_commit_older_than_the_version(fake, lookups):
+    # an old commit (or a commit time set back on purpose), tagged and first seen five hours ago
+    fake.add("go", "example.com/sneaky", "v1.0.0", timedelta(days=200), seen=timedelta(hours=5))
+    published = lookups.published(Package("go", "example.com/sneaky", "v1.0.0"))
+    assert abs(published - (NOW - timedelta(hours=5))) < timedelta(minutes=1)
+
+
+def test_go_trusts_a_commit_inside_the_window(fake, lookups):
+    commit = fake.add("go", "example.com/honest", "v1.0.0", timedelta(days=2), seen=timedelta(days=2) - timedelta(minutes=3))
+    assert lookups.published(Package("go", "example.com/honest", "v1.0.0")) == commit
+
+
+def test_go_in_a_wide_window_takes_the_youngest_possible_age(fake, lookups):
+    # first seen 20 days ago, from a commit 300 days old: the window around 20 days is days wide
+    fake.add("go", "example.com/later", "v1.0.0", timedelta(days=300), seen=timedelta(days=20))
+    published = lookups.published(Package("go", "example.com/later", "v1.0.0"))
+    assert NOW - timedelta(days=20) <= published <= NOW - timedelta(days=17)
+
+
+def test_go_versions_over_a_year_old_keep_the_commit_time(fake, lookups):
+    commit = fake.add("go", "example.com/old", "v1.0.0", timedelta(days=900), seen=timedelta(days=800))
+    assert lookups.published(Package("go", "example.com/old", "v1.0.0")) == commit
+
+
+def test_go_versions_the_checksum_database_lacks_keep_the_commit_time(fake, lookups):
+    commit = fake.add("go", "example.com/private", "v1.0.0", timedelta(days=1))
+    del fake.sumdb[("example.com/private", "v1.0.0")]
+    assert lookups.published(Package("go", "example.com/private", "v1.0.0")) == commit
+
+
+@pytest.mark.parametrize(
+    "variable, value",
+    [("GOSUMDB", "off"), ("GOSUMDB", "sum.example.com"), ("GONOSUMDB", "example.com"), ("GOPRIVATE", "*.example.com,example.com/team/*")],
+)
+def test_go_private_settings_skip_the_checksum_database(fake, lookups, monkeypatch, variable, value):
+    monkeypatch.setenv(variable, value)
+    commit = fake.add("go", "example.com/team/app", "v1.0.0", timedelta(days=200), seen=timedelta(hours=5))
+    assert lookups.published(Package("go", "example.com/team/app", "v1.0.0")) == commit
+    assert not any("golang.org/lookup" in url or "index.golang.org" in url for url in fake.urls)
+
+
+@pytest.mark.parametrize(
+    "patterns, module, private",
+    [
+        ("example.com", "example.com/a/b", True),
+        ("example.com/team/*", "example.com/team/app/sub", True),
+        ("example.com/team/*", "example.com/other/app", False),
+        ("*.corp.io", "git.corp.io/x", True),
+        ("", "github.com/x/y", False),
+    ],
+)
+def test_gosumdb_patterns(monkeypatch, patterns, module, private):
+    monkeypatch.delenv("GOSUMDB", raising=False)
+    monkeypatch.delenv("GONOSUMDB", raising=False)
+    monkeypatch.setenv("GOPRIVATE", patterns)
+    assert gosumdb(module) is not private
+
+
+def test_go_fails_closed_when_the_checksum_database_is_down(fake, lookups):
+    fake.add("go", "example.com/x", "v1.0.0", timedelta(days=200), seen=timedelta(hours=5))
+    fake.down.add("sumdb")
+    with pytest.raises(Unreachable):
+        lookups.published(Package("go", "example.com/x", "v1.0.0"))
+
+
+def test_go_calibration_is_shared_and_cached(fake, tmp_path):
+    for number in range(5):
+        fake.add("go", f"example.com/m{number}", "v1.0.0", timedelta(days=30 + number))
+    first = Registries(Cache(tmp_path), now=NOW)
+    for number in range(5):
+        first.published(Package("go", f"example.com/m{number}", "v1.0.0"))
+    first.cache.save()
+    asked = sum("index.golang.org" in url for url in fake.urls)
+    # a binary search over the ladder, shared by every module, not a walk per module
+    assert 0 < asked <= 10
+    assert json.loads((tmp_path / "gosumdb.json").read_text())
+    fake.urls.clear()
+    second = Registries(Cache(tmp_path), now=NOW)
+    fake.add("go", "example.com/m9", "v1.0.0", timedelta(days=31))
+    second.published(Package("go", "example.com/m9", "v1.0.0"))
+    assert not any("index.golang.org" in url for url in fake.urls)
