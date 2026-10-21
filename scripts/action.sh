@@ -45,9 +45,10 @@ while IFS= read -r pattern; do
   fi
 done <<< "${INPUT_EXCLUDE:-}"
 
-if [ "$(trim "${INPUT_SUMMARY:-true}")" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-  args+=(--summary "$GITHUB_STEP_SUMMARY")
-fi
+# the markdown report goes to a file first: it feeds the job summary and the pull request comment
+report="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/unripe-report.md"
+rm -f "$report"
+args+=(--summary "$report")
 if [ -n "$(trim "${INPUT_SARIF:-}")" ]; then
   args+=(--sarif "$(trim "$INPUT_SARIF")")
 fi
@@ -60,4 +61,30 @@ fi
 
 export PYTHONPATH="$GITHUB_ACTION_PATH/src"
 export UNRIPE_CACHE="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/unripe-cache"
-exec uv run --no-project --python "$(trim "${INPUT_PYTHON:-3.13}")" python -m unripe "${args[@]}"
+status=0
+uv run --no-project --python "$(trim "${INPUT_PYTHON:-3.13}")" python -m unripe "${args[@]}" || status=$?
+
+if [ -f "$report" ] && [ "$(trim "${INPUT_SUMMARY:-true}")" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+  cat "$report" >> "$GITHUB_STEP_SUMMARY"
+fi
+
+# one comment per pull request, edited in place on later runs. it is only
+# created when there is something to report, and updated when it clears up.
+# commenting is a courtesy: if it fails, the check's result stands as it is
+if [ "$(trim "${INPUT_COMMENT:-false}")" = "true" ] && [ -n "${PR_NUMBER:-}" ] && [ -f "$report" ]; then
+  marker="<!-- unripe -->"
+  body="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/unripe-comment.md"
+  { echo "$marker"; cat "$report"; } > "$body"
+  comments="repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments"
+  existing="$(gh api "$comments" --paginate --jq ".[] | select(.body | startswith(\"$marker\")) | .id" 2> /dev/null | head -n 1 || true)"
+  case "$existing" in
+    "" | *[!0-9]*) existing="" ;;
+  esac
+  if [ -n "$existing" ]; then
+    gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" -F "body=@$body" > /dev/null || echo "::warning::unripe could not update its pull request comment (does the job have pull-requests: write?)"
+  elif [ "$status" -ne 0 ]; then
+    gh api "$comments" -F "body=@$body" > /dev/null || echo "::warning::unripe could not comment on the pull request (does the job have pull-requests: write?)"
+  fi
+fi
+
+exit "$status"

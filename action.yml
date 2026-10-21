@@ -40,6 +40,16 @@ inputs:
     description: Also write a SARIF report to this path, for github/codeql-action/upload-sarif.
     required: false
     default: ""
+  comment:
+    description: >
+      On pull requests, also post the report as a comment when something is too new or unknown, and keep
+      that one comment up to date on later runs. Needs `pull-requests: write`.
+    required: false
+    default: "false"
+  github-token:
+    description: The token used to comment on pull requests.
+    required: false
+    default: ${{ github.token }}
   python-version:
     description: The Python that runs unripe. uv downloads it when the runner does not have it.
     required: false
@@ -65,5 +75,8 @@ runs:
         INPUT_SUMMARY: ${{ inputs.summary }}
         INPUT_SARIF: ${{ inputs.sarif }}
         INPUT_PYTHON: ${{ inputs.python-version }}
+        INPUT_COMMENT: ${{ inputs.comment }}
         PR_BASE: ${{ github.event.pull_request.base.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        GH_TOKEN: ${{ inputs.github-token }}
       run: bash "$GITHUB_ACTION_PATH/scripts/action.sh"

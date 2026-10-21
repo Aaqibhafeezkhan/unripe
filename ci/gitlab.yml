@@ -1,0 +1,41 @@
+# unripe for GitLab CI. Add it to your .gitlab-ci.yml with:
+#
+#   include:
+#     - remote: https://raw.githubusercontent.com/TexWoW/unripe/v0.4.0/ci/gitlab.yml
+#
+# On merge requests it checks only the versions the merge request adds. On the
+# default branch it checks everything. Override the variables below in your own
+# .gitlab-ci.yml to change the policy, for example UNRIPE_MIN_AGE: "7d".
+
+unripe:
+  stage: test
+  # the full image, not -slim: --since needs git
+  image: python:3.13
+  variables:
+    UNRIPE_VERSION: "0.4.0"
+    UNRIPE_MIN_AGE: "3d"
+    # anything else to pass, like "--exclude npm:@myorg/* --unknown warn"
+    UNRIPE_ARGS: ""
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - pip install --quiet --no-cache-dir "unripe==${UNRIPE_VERSION}"
+    - |
+      set -- --min-age "$UNRIPE_MIN_AGE" --summary unripe-report.md
+      if [ -n "${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" ]; then
+        # gitlab clones shallowly; fetch the base when it is missing
+        if ! git cat-file -e "${CI_MERGE_REQUEST_DIFF_BASE_SHA}^{commit}" 2> /dev/null; then
+          git fetch --quiet --depth=1 origin "$CI_MERGE_REQUEST_DIFF_BASE_SHA" ||
+            echo "unripe: could not fetch the merge request base; set GIT_DEPTH: 0"
+        fi
+        set -- "$@" --since "$CI_MERGE_REQUEST_DIFF_BASE_SHA"
+      fi
+      # UNRIPE_ARGS is split on spaces on purpose
+      # shellcheck disable=SC2086
+      unripe check "$@" $UNRIPE_ARGS
+  artifacts:
+    when: always
+    paths:
+      - unripe-report.md
+    expire_in: 30 days

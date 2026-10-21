@@ -33,6 +33,9 @@ jobs:
     # runs the action from this commit against real registries, on fixtures old enough to pass
     name: action (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      pull-requests: write
     strategy:
       fail-fast: false
       matrix:
@@ -46,3 +49,4 @@ jobs:
           paths: tests/testdata/live
           since: none
           sarif: unripe.sarif
+          comment: true

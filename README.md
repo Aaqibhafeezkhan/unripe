@@ -98,21 +98,27 @@ on: pull_request
 
 permissions:
   contents: read
+  pull-requests: write  # only needed for comment: true
 
 jobs:
   unripe:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: TexWoW/unripe@v0.2.0
+      - uses: TexWoW/unripe@v0.4.0
         with:
           min-age: 3d
+          comment: true
 ```
 
 On a pull request it only looks at versions the PR adds, compared with the
 base commit. It fetches that commit if the checkout is shallow, so you don't
 need `fetch-depth: 0`. On a push it checks everything. The report goes to the
-job summary.
+job summary, and with `comment: true` also to a comment on the pull request,
+so reviewers see it without opening the logs. That's one comment, posted when
+something is too new or unknown and edited in place on later runs, so it
+doesn't pile up. If the job can't comment, for example on a pull request from
+a fork, it says so in the log and the check result stays the same.
 
 Pin the action to a full commit sha rather than a tag if you can. The action
 runs unripe from its own checkout, so the code that runs is the commit you
@@ -129,13 +135,15 @@ Inputs:
 | `unknown` | `fail` | set to `warn` to let unknown ages pass |
 | `summary` | `true` | write the job summary |
 | `sarif` | | also write SARIF to this path |
+| `comment` | `false` | comment on the pull request when something is too new or unknown |
+| `github-token` | `github.token` | the token used for that comment |
 | `config` | | a config file other than the defaults |
 
 If you want the results as code scanning alerts on the lockfile lines, write
 SARIF and upload it (this needs `security-events: write`):
 
 ```yaml
-      - uses: TexWoW/unripe@v0.2.0
+      - uses: TexWoW/unripe@v0.4.0
         with:
           sarif: unripe.sarif
       - uses: github/codeql-action/upload-sarif@v4
@@ -149,13 +157,26 @@ SARIF and upload it (this needs `security-events: write`):
 ```yaml
 repos:
   - repo: https://github.com/TexWoW/unripe
-    rev: v0.2.0
+    rev: v0.4.0
     hooks:
       - id: unripe
 ```
 
 It runs when a lockfile changes. Add `args: [--since, HEAD]` if you only
 want it to look at what the commit adds.
+
+## In GitLab CI
+
+```yaml
+include:
+  - remote: https://raw.githubusercontent.com/TexWoW/unripe/v0.4.0/ci/gitlab.yml
+```
+
+That adds an `unripe` job to the `test` stage. On merge requests it checks
+only the versions the merge request adds; on the default branch it checks
+everything. The markdown report is kept as a job artifact. Set
+`UNRIPE_MIN_AGE` or `UNRIPE_ARGS` (for example `--exclude npm:@myorg/*`) in
+your own `variables:` to change it.
 
 ## Configuration
 

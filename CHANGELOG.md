@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 (2026-10-21)
+
+- The GitHub Action can comment on pull requests (`comment: true`). It posts
+  one comment when something is too new or unknown and keeps it up to date on
+  later runs. If it can't comment, it warns and the result is unchanged.
+- A GitLab CI template, `ci/gitlab.yml`, that checks only what a merge request
+  adds.
+
 ## 0.3.0 (2026-10-21)
 
 - NuGet: reads `packages.lock.json` and asks nuget.org. Unlisted versions,
