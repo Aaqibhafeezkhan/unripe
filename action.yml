@@ -1,0 +1,69 @@
+name: unripe
+description: Fail when a locked dependency version was published more recently than you trust
+author: TexWoW
+branding:
+  icon: clock
+  color: green
+
+inputs:
+  min-age:
+    description: How old every locked version must be, like 72h, 3d or 1w. Empty uses the config file, then 3d.
+    required: false
+    default: ""
+  since:
+    description: >
+      Only check versions added since this git ref. Empty means the pull request's base commit on
+      pull_request events and everything otherwise. "none" always checks everything.
+    required: false
+    default: ""
+  paths:
+    description: Lockfiles or directories to check, separated by spaces or new lines. Empty uses the config file, then the whole repository.
+    required: false
+    default: ""
+  exclude:
+    description: Packages to skip, one pattern per line, like `left-pad`, `@types/*` or `npm:@myorg/*`.
+    required: false
+    default: ""
+  unknown:
+    description: What a version with an unknown publish time does, fail or warn. Empty uses the config file, then fail.
+    required: false
+    default: ""
+  config:
+    description: A config file to read instead of .unripe.toml or pyproject.toml.
+    required: false
+    default: ""
+  summary:
+    description: Write a markdown report to the job summary.
+    required: false
+    default: "true"
+  sarif:
+    description: Also write a SARIF report to this path, for github/codeql-action/upload-sarif.
+    required: false
+    default: ""
+  python-version:
+    description: The Python that runs unripe. uv downloads it when the runner does not have it.
+    required: false
+    default: "3.13"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up uv
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        enable-cache: false
+        ignore-empty-workdir: true
+    - name: Run unripe
+      shell: bash
+      env:
+        INPUT_MIN_AGE: ${{ inputs.min-age }}
+        INPUT_SINCE: ${{ inputs.since }}
+        INPUT_PATHS: ${{ inputs.paths }}
+        INPUT_EXCLUDE: ${{ inputs.exclude }}
+        INPUT_UNKNOWN: ${{ inputs.unknown }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_SUMMARY: ${{ inputs.summary }}
+        INPUT_SARIF: ${{ inputs.sarif }}
+        INPUT_PYTHON: ${{ inputs.python-version }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/action.sh"
