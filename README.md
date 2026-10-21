@@ -221,6 +221,12 @@ time. Publish times never change, so every answer is cached on disk for good
 To use a mirror, set `UNRIPE_NPM_REGISTRY` or `UNRIPE_PYPI_URL`. Go lookups
 use the first proxy in `GOPROXY`.
 
+For Go, the module proxy only reports a version's commit time, not when the
+version was first published. A tag made today on an older commit looks as old
+as the commit, and git lets an author set any commit time. There is no public
+record of when the proxy first saw a version that unripe can look up, so for Go
+modules the check is weaker than for the other ecosystems.
+
 `uv.lock` and `composer.lock` record publish times themselves, and unripe uses
 them. Someone who can edit your lockfile can change those times, but someone
 who can edit your lockfile can also point it at any package they like, so

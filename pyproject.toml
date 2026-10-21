@@ -39,6 +39,9 @@ unripe = "unripe.cli:main"
 [dependency-groups]
 dev = ["pytest>=8"]
 
+[tool.hatch.build.targets.sdist]
+exclude = ["PLAN.md", ".claude", ".github"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/unripe"]
 
