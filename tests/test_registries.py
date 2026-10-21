@@ -159,6 +159,10 @@ def test_registry_urls_from_the_environment(monkeypatch):
 
 
 class Response(io.BytesIO):
+    def __init__(self, body: bytes, headers: dict | None = None):
+        super().__init__(body)
+        self.headers = headers or {}
+
     def __enter__(self):
         return self
 
@@ -320,3 +324,99 @@ def test_go_calibration_is_shared_and_cached(fake, tmp_path):
     fake.add("go", "example.com/m9", "v1.0.0", timedelta(days=31))
     second.published(Package("go", "example.com/m9", "v1.0.0"))
     assert not any("index.golang.org" in url for url in fake.urls)
+
+
+def test_fetch_undoes_gzip(monkeypatch):
+    import gzip
+
+    body = gzip.compress(b'{"zipped": true}')
+    monkeypatch.setattr(registries.urllib.request, "urlopen", lambda request, timeout: Response(body, {"Content-Encoding": "gzip"}))
+    assert registries.fetch("https://example.com/x") == {"zipped": True}
+
+
+def test_fetchmodified_reads_last_modified(monkeypatch):
+    def urlopen(request, timeout):
+        assert request.get_method() == "HEAD"
+        return Response(b"", {"Last-Modified": "Mon, 18 Dec 2023 20:49:31 GMT"})
+
+    monkeypatch.setattr(registries.urllib.request, "urlopen", urlopen)
+    assert registries.fetchmodified("https://example.com/x.pom") == datetime(2023, 12, 18, 20, 49, 31, tzinfo=timezone.utc)
+
+
+def test_fetchmodified_without_the_header_is_unreachable(monkeypatch):
+    monkeypatch.setattr(registries.urllib.request, "urlopen", lambda request, timeout: Response(b""))
+    with pytest.raises(Unreachable, match="Last-Modified"):
+        registries.fetchmodified("https://example.com/x.pom")
+
+
+def test_nuget_asks_for_the_version_in_lower_case(fake, lookups):
+    moment = fake.add("nuget", "Newtonsoft.Json", "13.0.1", timedelta(days=50))
+    assert lookups.published(Package("nuget", "Newtonsoft.Json", "13.0.1")) == moment
+    assert fake.urls == ["https://api.nuget.org/v3/registration5-gz-semver2/newtonsoft.json/13.0.1.json"]
+
+
+def test_nuget_unlisted_versions_use_the_catalog_time(fake, lookups):
+    # nuget.org says 1900 for an unlisted version, which would make a fresh one look ancient
+    moment = fake.add("nuget", "Some.Package", "2.0.0", timedelta(hours=6))
+    fake.unlisted.add(("some.package", "2.0.0"))
+    assert lookups.published(Package("nuget", "Some.Package", "2.0.0")) == moment
+    assert any("/catalog0/" in url for url in fake.urls)
+
+
+def test_nuget_missing_version(fake, lookups):
+    fake.add("nuget", "Some.Package", "2.0.0")
+    with pytest.raises(Missing):
+        lookups.published(Package("nuget", "Some.Package", "9.9.9"))
+
+
+def test_maven_central(fake, lookups):
+    moment = fake.add("maven", "com.google.guava:guava", "33.0.0-jre", timedelta(days=300))
+    assert lookups.published(Package("maven", "com.google.guava:guava", "33.0.0-jre")) == moment
+    assert fake.urls == ["https://repo1.maven.org/maven2/com/google/guava/guava/33.0.0-jre/guava-33.0.0-jre.pom"]
+
+
+def test_maven_android_artifacts_try_google_first(fake, lookups):
+    fake.add("maven", "androidx.core:core", "1.12.0")
+    fake.mavenrepo["androidx.core:core"] = registries.GOOGLE
+    lookups.published(Package("maven", "androidx.core:core", "1.12.0"))
+    assert fake.urls == ["https://dl.google.com/dl/android/maven2/androidx/core/core/1.12.0/core-1.12.0.pom"]
+
+
+def test_maven_plugin_markers_try_the_plugin_portal_first(fake, lookups):
+    fake.add("maven", "com.gradle.develocity:com.gradle.develocity.gradle.plugin", "3.18.1")
+    fake.mavenrepo["com.gradle.develocity:com.gradle.develocity.gradle.plugin"] = registries.PLUGINS
+    lookups.published(Package("maven", "com.gradle.develocity:com.gradle.develocity.gradle.plugin", "3.18.1"))
+    assert fake.urls[0].startswith("https://plugins.gradle.org/m2/com/gradle/develocity/")
+    assert len(fake.urls) == 1
+
+
+def test_maven_falls_through_to_other_repositories_then_missing(fake, lookups):
+    fake.add("maven", "com.example:lib", "1.0.0")
+    fake.mavenrepo["com.example:lib"] = "https://elsewhere.example.com/maven"
+    with pytest.raises(Missing):
+        lookups.published(Package("maven", "com.example:lib", "1.0.0"))
+    assert len(fake.urls) == 3
+
+
+def test_maven_extra_repositories_from_config_and_environment(fake, monkeypatch):
+    moment = fake.add("maven", "io.confluent:common-utils", "8.1.0")
+    fake.mavenrepo["io.confluent:common-utils"] = "https://packages.confluent.io/maven"
+    found = Registries(Cache(None), now=NOW, mavenrepos=["https://packages.confluent.io/maven/"])
+    assert found.published(Package("maven", "io.confluent:common-utils", "8.1.0")) == moment
+    monkeypatch.setenv("UNRIPE_MAVEN_REPOS", "https://packages.confluent.io/maven")
+    assert Registries(Cache(None), now=NOW).published(Package("maven", "io.confluent:common-utils", "8.1.0")) == moment
+
+
+def test_maven_an_unreachable_repository_is_not_a_missing_version(fake, lookups):
+    fake.add("maven", "com.google.guava:guava", "33.0.0-jre")
+    fake.down.add("maven")
+    with pytest.raises(Unreachable):
+        lookups.published(Package("maven", "com.google.guava:guava", "33.0.0-jre"))
+
+
+def test_nuget_falls_back_to_the_package_file_while_the_registration_lags(fake, lookups):
+    fake.nupkgs[("brand.new", "1.0.0")] = NOW - timedelta(minutes=20)
+    assert lookups.published(Package("nuget", "Brand.New", "1.0.0")) == NOW - timedelta(minutes=20)
+    assert fake.urls[-1] == "https://api.nuget.org/v3-flatcontainer/brand.new/1.0.0/brand.new.1.0.0.nupkg"
+    with pytest.raises(Missing):
+        lookups.published(Package("nuget", "Brand.New", "2.0.0"))

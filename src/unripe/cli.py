@@ -64,8 +64,8 @@ def parser() -> argparse.ArgumentParser:
     return top
 
 
-def registries(nocache: bool) -> Registries:
-    return Registries(Cache(None if nocache else cachedir()))
+def registries(nocache: bool, mavenrepos: list[str] | None = None) -> Registries:
+    return Registries(Cache(None if nocache else cachedir()), mavenrepos=mavenrepos or ())
 
 
 def progress(done: int, total: int) -> None:
@@ -88,7 +88,7 @@ def runcheck(args: argparse.Namespace) -> int:
     if missing:
         raise PolicyError(f"no such file or directory: {', '.join(missing)}")
     show = progress if sys.stderr.isatty() else None
-    result = check(paths, policy, registries(args.no_cache), since=args.since, progress=show)
+    result = check(paths, policy, registries(args.no_cache, policy.maven_repositories), since=args.since, progress=show)
 
     report = render(result, args.format, args.verbose)
     if args.output:
@@ -108,7 +108,7 @@ def runexplain(args: argparse.Namespace) -> int:
     name = normal(args.name) if args.ecosystem == "pypi" else args.name
     version = args.version.lstrip("v") if args.ecosystem == "composer" else args.version
     package = Package(args.ecosystem, name, version)
-    found = registries(args.no_cache)
+    found = registries(args.no_cache, policy.maven_repositories)
     finding = judge(package, policy, found, datetime.now(timezone.utc))
     found.cache.save()
     sys.stdout.write(explanation(finding, policy.min_age))

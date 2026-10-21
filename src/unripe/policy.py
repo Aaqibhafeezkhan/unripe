@@ -15,7 +15,7 @@ UNITS = {"m": 60, "h": 3600, "d": 86400, "w": 604800}
 DURATION = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([mhdw])\s*$", re.IGNORECASE)
 DEFAULT_AGE = timedelta(days=3)
 CONFIGS = (".unripe.toml", "pyproject.toml")
-KEYS = {"min-age", "exclude", "unknown", "paths"}
+KEYS = {"min-age", "exclude", "unknown", "paths", "maven-repositories"}
 
 
 class PolicyError(ValueError):
@@ -72,9 +72,12 @@ class Rule:
             if not fnmatch.fnmatchcase(version, pattern[at + 1:]):
                 return False
             pattern = pattern[:at]
-        candidate = name.lower() if ecosystem == "pypi" else name
+        candidate = name
         if ecosystem == "pypi":
-            pattern = re.sub(r"[-_.]+", "-", pattern).lower()
+            candidate, pattern = name.lower(), re.sub(r"[-_.]+", "-", pattern).lower()
+        elif ecosystem == "nuget":
+            # nuget ids ignore case
+            candidate, pattern = name.lower(), pattern.lower()
         return fnmatch.fnmatchcase(candidate, pattern)
 
 
@@ -84,6 +87,8 @@ class Policy:
     exclude: list[str] = field(default_factory=list)
     unknown: str = "fail"  # or "warn"
     paths: list[str] = field(default_factory=list)
+    # extra Maven repositories to look in after the usual ones
+    maven_repositories: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.unknown not in ("fail", "warn"):
@@ -151,4 +156,5 @@ def build(settings: dict, min_age=None, exclude=(), unknown=None, source: Path |
         exclude=strings("exclude") + list(exclude),
         unknown=unknown or str(settings.get("unknown", "fail")),
         paths=strings("paths"),
+        maven_repositories=strings("maven-repositories"),
     )

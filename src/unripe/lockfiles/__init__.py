@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Callable
 
-from unripe.lockfiles import javascript, others, python
+from unripe.lockfiles import dotnet, javascript, jvm, others, python
 from unripe.model import Package
 
 Parser = Callable[[str, str], list[Package]]
@@ -26,10 +26,14 @@ PARSERS: dict[str, Parser] = {
     "go.mod": others.gomod,
     "composer.lock": others.composer,
     "Gemfile.lock": others.gemfile,
+    "packages.lock.json": dotnet.nuget,
+    "gradle.lockfile": jvm.gradle,
+    "buildscript-gradle.lockfile": jvm.gradle,
+    "settings-gradle.lockfile": jvm.gradle,
 }
 REQUIREMENTS = re.compile(r"^(requirements|constraints)[\w.-]*\.txt$", re.IGNORECASE)
 # never worth walking into: installed copies of dependencies, builds, caches, and go's test inputs
-SKIP = {"node_modules", ".git", ".hg", ".venv", "venv", "env", "vendor", "target", "dist", "build", "__pycache__", ".tox", ".nox", ".cache", "testdata"}
+SKIP = {"node_modules", ".git", ".hg", ".venv", "venv", "env", "vendor", "target", "dist", "build", "__pycache__", ".tox", ".nox", ".cache", "testdata", "bin", "obj", ".gradle"}
 
 
 class Unreadable(Exception):
@@ -37,11 +41,14 @@ class Unreadable(Exception):
 
 
 def parser(path: str | Path) -> Parser | None:
-    name = Path(path).name
-    if name in PARSERS:
-        return PARSERS[name]
-    if REQUIREMENTS.match(name):
+    path = Path(path)
+    if path.name in PARSERS:
+        return PARSERS[path.name]
+    if REQUIREMENTS.match(path.name):
         return python.requirements
+    # gradle before 6 wrote one lockfile per configuration
+    if path.suffix == ".lockfile" and path.parent.name == "dependency-locks":
+        return jvm.gradle
     return None
 
 
@@ -69,7 +76,7 @@ def find(paths: list[str]) -> list[Path]:
                 # bun 1.2 leaves the old binary lockfile next to the new text one
                 if name == "bun.lockb" and "bun.lock" in files:
                     continue
-                if parser(name):
+                if parser(Path(root) / name):
                     add(Path(root) / name)
     return found
 

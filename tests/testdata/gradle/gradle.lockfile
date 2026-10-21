@@ -1,0 +1,11 @@
+# This is a Gradle generated file for dependency locking.
+# Manual edits can break the build and are not advised.
+# This file is expected to be part of source control.
+androidx.core:core:1.12.0=debugRuntimeClasspath,releaseRuntimeClasspath
+com.fasterxml.jackson.core:jackson-annotations:2.22=compileClasspath,runtimeClasspath
+com.fasterxml.jackson.core:jackson-core:2.21.4=runtimeClasspath
+com.fasterxml.jackson.core:jackson-core:2.22.2=compileClasspath
+com.google.guava:guava:33.0.0-jre=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.gradle.develocity:com.gradle.develocity.gradle.plugin:3.18.1=classpath
+io.confluent:common-utils:8.1.0=runtimeClasspath
+empty=annotationProcessor,testAnnotationProcessor

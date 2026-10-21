@@ -73,7 +73,8 @@ def text(result: Result, verbose: bool = False) -> str:
     if not result.lockfiles:
         out.append("")
         out.append("no lockfiles found. unripe reads package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, yarn.lock,")
-        out.append("bun.lock, uv.lock, poetry.lock, Pipfile.lock, requirements*.txt, Cargo.lock, go.mod, composer.lock and Gemfile.lock")
+        out.append("bun.lock, uv.lock, poetry.lock, Pipfile.lock, requirements*.txt, Cargo.lock, go.mod, composer.lock,")
+        out.append("Gemfile.lock, packages.lock.json and gradle.lockfile")
 
     groups = [
         ("unripe", f"published less than {age} ago"),

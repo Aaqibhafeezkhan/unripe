@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 (2026-10-21)
+
+- NuGet: reads `packages.lock.json` and asks nuget.org. Unlisted versions,
+  which nuget.org dates to 1900, get their real time from the NuGet catalog.
+- Gradle: reads `gradle.lockfile` and the older
+  `gradle/dependency-locks/*.lockfile`, and asks Maven Central, Google's Maven
+  repository and the Gradle plugin portal. Other repositories can be added
+  with `maven-repositories` in the config or `UNRIPE_MAVEN_REPOS`.
+- Registry answers are fetched gzipped, which makes big npm documents much
+  quicker to download.
+
 ## 0.2.0 (2026-10-21)
 
 - Go ages can no longer be faked with an old commit. The module proxy only

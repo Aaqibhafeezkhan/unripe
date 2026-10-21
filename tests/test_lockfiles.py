@@ -214,3 +214,58 @@ def test_find_prefers_bun_lock_over_the_old_binary(tmp_path):
     (tmp_path / "bun.lock").write_text("{}")
     (tmp_path / "bun.lockb").write_bytes(b"\0")
     assert [p.name for p in lockfiles.find([str(tmp_path)])] == ["bun.lock"]
+
+
+def test_nuget_lock_skips_projects_and_normalizes_versions():
+    assert pairs("nuget/packages.lock.json") == {
+        ("NETStandard.Library", "2.0.3"),
+        ("Newtonsoft.Json", "13.0.1"),
+        ("Microsoft.NETCore.Platforms", "1.1.0"),
+        ("Old.Style.Version", "1.0.0"),
+        ("With.Metadata", "2.1.0"),
+        ("System.Text.Json", "8.0.5"),
+        ("Azure.Core", "1.38.0-beta.1"),
+    }
+
+
+@pytest.mark.parametrize(
+    "written, normal",
+    [("1.0", "1.0.0"), ("1.0.0.0", "1.0.0"), ("1.2.3.4", "1.2.3.4"), ("01.002.3", "1.2.3"), ("2.0.0-Beta.1", "2.0.0-beta.1"), ("3.1.0+sha.abc", "3.1.0"), ("weird", "weird")],
+)
+def test_nuget_versions(written, normal):
+    from unripe.lockfiles.dotnet import normal as nugetnormal
+
+    assert nugetnormal(written) == normal
+
+
+def test_gradle_lockfile():
+    found = {(p.ecosystem, p.name, p.version) for p in parse("gradle/gradle.lockfile")}
+    assert found == {
+        ("maven", "androidx.core:core", "1.12.0"),
+        ("maven", "com.fasterxml.jackson.core:jackson-annotations", "2.22"),
+        ("maven", "com.fasterxml.jackson.core:jackson-core", "2.21.4"),
+        ("maven", "com.fasterxml.jackson.core:jackson-core", "2.22.2"),
+        ("maven", "com.google.guava:guava", "33.0.0-jre"),
+        ("maven", "com.gradle.develocity:com.gradle.develocity.gradle.plugin", "3.18.1"),
+        ("maven", "io.confluent:common-utils", "8.1.0"),
+    }
+
+
+def test_old_gradle_lockfiles_are_found_by_their_folder(tmp_path):
+    found = lockfiles.find([str(TESTDATA / "gradle-legacy")])
+    assert [p.name for p in found] == ["compileClasspath.lockfile"]
+    assert pairs("gradle-legacy/gradle/dependency-locks/compileClasspath.lockfile") == {
+        ("com.google.guava:failureaccess", "1.0.2"),
+        ("com.google.guava:guava", "33.0.0-jre"),
+    }
+    # a .lockfile anywhere else is not a gradle lockfile
+    (tmp_path / "other.lockfile").write_text("a:b:1.0\n")
+    assert lockfiles.find([str(tmp_path)]) == []
+
+
+def test_find_skips_dotnet_and_gradle_build_output(tmp_path):
+    for folder in ("bin", "obj", ".gradle"):
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / "packages.lock.json").write_text("{}")
+    (tmp_path / "packages.lock.json").write_text("{}")
+    assert [p.relative_to(tmp_path).as_posix() for p in lockfiles.find([str(tmp_path)])] == ["packages.lock.json"]

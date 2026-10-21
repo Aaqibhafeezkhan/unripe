@@ -6,9 +6,9 @@
 
 unripe checks your lockfiles and fails if any dependency version was
 published too recently. The default is 3 days. It works across npm, pnpm,
-yarn, bun, PyPI, Cargo, Go, Composer and RubyGems, so a repo with a Python
-backend and a JavaScript frontend gets one check and one policy instead of
-five different settings.
+yarn, bun, PyPI, Cargo, Go, Composer, RubyGems, NuGet and Gradle, so a repo
+with a Python backend and a JavaScript frontend gets one check and one policy
+instead of five different settings.
 
 Here it is on Discourse's `Gemfile.lock`, the evening of October 20, 2026:
 
@@ -45,8 +45,8 @@ Most package managers have added a setting for this in the last year, and
 if yours has one you should turn it on. unripe is for what those settings
 don't do. It checks what is already in the lockfile, including whatever a bot
 or an old tool put there. It reports on just the versions a pull request
-adds. It applies one policy to every ecosystem in the repo. And it covers Go
-and Composer, which don't have a setting yet.
+adds. It applies one policy to every ecosystem in the repo. And it covers Go,
+Composer, NuGet and Gradle, which don't have a setting yet.
 
 ## Install
 
@@ -74,10 +74,18 @@ or `pipx install unripe`, or `pip install unripe`.
 | `go.mod` | Go module proxy and checksum database |
 | `composer.lock` | the lockfile's own `time` field, else Packagist |
 | `Gemfile.lock` | rubygems.org |
+| `packages.lock.json` | nuget.org |
+| `gradle.lockfile`, `gradle/dependency-locks/*.lockfile` | Maven Central, Google's Maven repository, the Gradle plugin portal |
 
 Dependencies from git, a local path, a workspace or another registry are
 skipped, since there's nothing public to ask about them. The old binary
 `bun.lockb` can't be read; bun 1.2 and later write a text `bun.lock`.
+
+NuGet's `packages.lock.json` doesn't record which feed a package came from,
+so unripe looks everything up on nuget.org. Packages from a private feed come
+back unknown; exclude them. For Gradle, artifacts that live in another Maven
+repository (Confluent's, say) can be found by adding it to
+`maven-repositories` in the config.
 
 For Go it reads `go.mod`, not `go.sum`. Since Go 1.17, `go.mod` lists every
 module in the build, while `go.sum` also remembers versions that aren't used.
@@ -159,6 +167,7 @@ combined.
 min-age = "3d"
 unknown = "fail"
 paths = ["web", "api"]
+maven-repositories = ["https://packages.confluent.io/maven"]
 exclude = [
   "npm:@myorg/*",
   "left-pad@1.3.0",
@@ -166,10 +175,12 @@ exclude = [
 ```
 
 An exclude is a package name or a glob. Prefix it with an ecosystem
-(`npm:`, `pypi:`, `cargo:`, `go:`, `composer:`, `rubygems:`) to limit it to
-one, and add `@version` to limit it to certain versions, like
-`@types/node@20.*`. PyPI names are normalised the way PyPI does it, so
-`Typing_Extensions` and `typing-extensions` are the same package.
+(`npm:`, `pypi:`, `cargo:`, `go:`, `composer:`, `rubygems:`, `nuget:`,
+`maven:`) to limit it to one, and add `@version` to limit it to certain versions, like
+`@types/node@20.*`. Gradle packages are named `group:artifact`, like
+`maven:com.mycorp:*`. PyPI names are normalised the way PyPI does it, so
+`Typing_Extensions` and `typing-extensions` are the same package, and NuGet
+names ignore case.
 
 ## Command line
 
@@ -217,7 +228,16 @@ at all. Each version is looked up once even if several lockfiles have it,
 and lookups run 16 at a time. For npm, Cargo, Composer and RubyGems one
 request covers every version of a package.
 
-Mirrors work through `UNRIPE_NPM_REGISTRY` and `UNRIPE_PYPI_URL`. For Go,
+NuGet and Maven needed care too. nuget.org reports an unlisted version as
+published in 1900, so unripe reads its real time from the NuGet catalog
+instead; otherwise a version unlisted the day it came out would look 126
+years old. Maven repositories never change a published file, so a POM's
+`Last-Modified` header is when the version was published, and it's there
+the moment the file is, before the search index catches up.
+
+Mirrors work through `UNRIPE_NPM_REGISTRY` and `UNRIPE_PYPI_URL`, and
+`UNRIPE_MAVEN_REPOS` (comma separated) adds Maven repositories the same way
+`maven-repositories` does. For Go,
 unripe uses the first proxy in `GOPROXY`.
 
 Go needed extra work. The module proxy only reports a version's commit

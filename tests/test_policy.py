@@ -123,3 +123,15 @@ def test_bad_config_is_an_error(tmp_path, content, message):
 def test_an_explicit_config_must_exist(tmp_path):
     with pytest.raises(PolicyError, match="no such config"):
         config(tmp_path, tmp_path / "missing.toml")
+
+
+def test_nuget_excludes_ignore_case():
+    assert Rule.parse("nuget:newtonsoft.*").matches("nuget", "Newtonsoft.Json", "13.0.1")
+    assert Rule.parse("maven:com.mycorp:*").matches("maven", "com.mycorp:core", "1.0.0")
+    assert not Rule.parse("maven:com.mycorp:*").matches("maven", "com.other:core", "1.0.0")
+
+
+def test_config_maven_repositories(tmp_path):
+    (tmp_path / ".unripe.toml").write_text('maven-repositories = ["https://packages.confluent.io/maven"]\n')
+    settings, source = config(tmp_path)
+    assert build(settings, source=source).maven_repositories == ["https://packages.confluent.io/maven"]

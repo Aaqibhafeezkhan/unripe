@@ -10,7 +10,9 @@ A registry that cannot answer (down, rate limited, private package) is an
 
 from __future__ import annotations
 
+import email.utils
 import fnmatch
+import gzip
 import json
 import os
 import random
@@ -46,15 +48,23 @@ def when(text: str) -> datetime:
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
 
 
-def fetchtext(url: str, accept: str = "*/*") -> str:
-    """GET a body as text, retrying the failures worth retrying. A 404 is an answer, not a failure."""
+def ask(url: str, accept: str = "*/*", method: str = "GET") -> tuple[dict[str, str], bytes]:
+    """
+    One request, retrying the failures worth retrying, as the response headers
+    (lower cased names) and body, gzip undone. A 404 is an answer, not a failure.
+    """
     delay = 1.0
     last = ""
     for attempt in range(TRIES):
-        request = urllib.request.Request(url, headers={"User-Agent": AGENT, "Accept": accept})
+        headers = {"User-Agent": AGENT, "Accept": accept, "Accept-Encoding": "gzip"}
+        request = urllib.request.Request(url, headers=headers, method=method)
         try:
             with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-                return response.read().decode("utf-8")
+                found = {name.lower(): value for name, value in response.headers.items()}
+                body = response.read()
+                if found.get("content-encoding") == "gzip" and body:
+                    body = gzip.decompress(body)
+                return found, body
         except urllib.error.HTTPError as error:
             if error.code in (404, 410):
                 raise Missing(url) from error
@@ -64,12 +74,27 @@ def fetchtext(url: str, accept: str = "*/*") -> str:
             retry = error.headers.get("Retry-After")
             if retry and retry.isdigit():
                 delay = max(delay, min(float(retry), 60.0))
-        except (urllib.error.URLError, TimeoutError, OSError) as error:
+        except (urllib.error.URLError, TimeoutError, OSError, EOFError, gzip.BadGzipFile) as error:
             last = str(getattr(error, "reason", error))
         if attempt < TRIES - 1:
             time.sleep(delay + random.random() * 0.5)
             delay *= 2
     raise Unreachable(f"{url}: {last}")
+
+
+def fetchtext(url: str, accept: str = "*/*") -> str:
+    """GET a body as text."""
+    return ask(url, accept)[1].decode("utf-8-sig", errors="replace")
+
+
+def fetchmodified(url: str) -> datetime:
+    """When a file was last changed, from a HEAD request's Last-Modified header."""
+    headers, _ = ask(url, method="HEAD")
+    try:
+        stamp = email.utils.parsedate_to_datetime(headers["last-modified"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise Unreachable(f"{url}: no usable Last-Modified header") from error
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
 
 
 def fetch(url: str) -> dict | list:
@@ -286,6 +311,30 @@ class SumDB:
         return older[0], newer[0], older[0] + width * fraction
 
 
+CENTRAL = "https://repo1.maven.org/maven2"
+GOOGLE = "https://dl.google.com/dl/android/maven2"
+PLUGINS = "https://plugins.gradle.org/m2"
+ANDROID = ("androidx.", "com.android.", "com.google.android.", "com.google.firebase", "com.google.gms", "com.google.mlkit", "com.google.ar.")
+
+
+def mavenrepos(group: str, artifact: str, extra: list[str] | tuple[str, ...] = ()) -> list[str]:
+    """
+    The Maven repositories to try for an artifact, most likely first, then any
+    extra ones from the config file or UNRIPE_MAVEN_REPOS (comma separated).
+    """
+    if artifact.endswith(".gradle.plugin"):
+        usual = [PLUGINS, CENTRAL, GOOGLE]
+    elif group.startswith(ANDROID) or group in ("com.google.firebase", "com.google.gms"):
+        usual = [GOOGLE, CENTRAL, PLUGINS]
+    else:
+        usual = [CENTRAL, GOOGLE, PLUGINS]
+    more = list(extra) + (os.environ.get("UNRIPE_MAVEN_REPOS") or "").split(",")
+    for url in (url.strip().rstrip("/") for url in more):
+        if url and url not in usual:
+            usual.append(url)
+    return usual
+
+
 def crateindex(name: str) -> str:
     """Where a crate lives in the sparse index: `se/rd/serde`, `3/s/syn`, `2/cc`, `1/a`."""
     name = name.lower()
@@ -299,8 +348,16 @@ def crateindex(name: str) -> str:
 class Registries:
     """Looks publish times up, through the cache. Thread-safe: unripe asks many at once."""
 
-    def __init__(self, cache: Cache, npmurl: str | None = None, pypiurl: str | None = None, now: datetime | None = None):
+    def __init__(
+        self,
+        cache: Cache,
+        npmurl: str | None = None,
+        pypiurl: str | None = None,
+        now: datetime | None = None,
+        mavenrepos: list[str] | tuple[str, ...] = (),
+    ):
         self.cache = cache
+        self.mavenextra = list(mavenrepos)
         self.sumdb = SumDB(now or datetime.now(timezone.utc), cache)
         self.npmurl = (npmurl or os.environ.get("UNRIPE_NPM_REGISTRY") or "https://registry.npmjs.org").rstrip("/")
         self.pypiurl = (pypiurl or os.environ.get("UNRIPE_PYPI_URL") or "https://pypi.org").rstrip("/")
@@ -311,6 +368,8 @@ class Registries:
             "go": self.go,
             "composer": self.composer,
             "rubygems": self.rubygems,
+            "nuget": self.nuget,
+            "maven": self.maven,
         }
         # registries whose one answer covers every version are asked once per package
         self.pending: dict[str, threading.Lock] = {}
@@ -446,3 +505,40 @@ class Registries:
             return times
 
         return self.every(package, fetchall)
+
+    def nuget(self, package: Package) -> datetime:
+        name, version = urllib.parse.quote(package.name.lower()), urllib.parse.quote(package.version.lower())
+        try:
+            leaf = fetch(f"https://api.nuget.org/v3/registration5-gz-semver2/{name}/{version}.json")
+        except Missing:
+            # the registration can lag a new version by an hour or more while it is already
+            # installable. the package file's Last-Modified is a few minutes after publishing,
+            # never before, so it can only make a version look younger
+            return fetchmodified(f"https://api.nuget.org/v3-flatcontainer/{name}/{version}/{name}.{version}.nupkg")
+        if not isinstance(leaf, dict) or not leaf.get("published"):
+            raise Missing(f"{package} is not on nuget.org")
+        published = when(str(leaf["published"]))
+        if published.year > 1900:
+            return published
+        # nuget.org rewrites an unlisted version's publish time to 1900; the catalog keeps when it was created
+        entry = leaf.get("catalogEntry")
+        catalog = fetch(entry) if isinstance(entry, str) and entry.startswith("https://api.nuget.org/") else {}
+        if not isinstance(catalog, dict) or not catalog.get("created"):
+            raise Missing(f"{package} is unlisted on nuget.org and its catalog entry has no time")
+        return when(str(catalog["created"]))
+
+    def maven(self, package: Package) -> datetime:
+        group, _, artifact = package.name.partition(":")
+        path = f"{group.replace('.', '/')}/{artifact}/{package.version}/{artifact}-{package.version}.pom"
+        unreachable = None
+        for repository in mavenrepos(group, artifact, self.mavenextra):
+            try:
+                # repositories never change a published file, so its Last-Modified is when it was published
+                return fetchmodified(f"{repository}/{path}")
+            except Missing:
+                continue
+            except Unreachable as error:
+                unreachable = error
+        if unreachable:
+            raise unreachable
+        raise Missing(f"{package} is in none of the Maven repositories unripe knows")

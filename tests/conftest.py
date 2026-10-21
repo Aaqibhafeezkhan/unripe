@@ -39,10 +39,19 @@ class FakeRegistry:
         self.base = NOW
         # when the go checksum database first saw a module version
         self.sumdb: dict[tuple[str, str], datetime] = {}
+        # nuget versions that are unlisted, which nuget.org dates 1900
+        self.unlisted: set[tuple[str, str]] = set()
+        # nuget versions the registration doesn't know yet, with their package file's time
+        self.nupkgs: dict[tuple[str, str], datetime] = {}
+        # which repository holds a maven artifact, when it isn't maven central
+        self.mavenrepo: dict[str, str] = {}
 
     def add(self, ecosystem: str, name: str, version: str, age: timedelta | None = None, at: datetime | None = None, seen: timedelta | None = None) -> datetime:
         """A version published `age` ago. For go, `seen` is how long ago the checksum database first saw it (default: then too)."""
         moment = at or self.base - (age if age is not None else timedelta(days=400))
+        if ecosystem == "nuget":
+            # nuget.org files ids and versions in lower case
+            name, version = name.lower(), version.lower()
         self.times.setdefault((ecosystem, name), {})[version] = moment
         if ecosystem == "go":
             self.sumdb[(name, version)] = self.base - seen if seen is not None else moment
@@ -63,6 +72,31 @@ class FakeRegistry:
         if url.startswith("https://sum.golang.org/"):
             return self.checksums(url)
         return json.dumps(self.answer(url))
+
+    def modified(self, url: str) -> datetime:
+        """A HEAD request's Last-Modified, for maven repositories."""
+        self.urls.append(url)
+        if "maven" in self.down:
+            raise Unreachable(f"{url}: HTTP 503")
+        flat = re.fullmatch(r"https://api\.nuget\.org/v3-flatcontainer/([^/]+)/([^/]+)/([^/]+)\.nupkg", url)
+        if flat:
+            name, version = flat.group(1), flat.group(2)
+            assert flat.group(3) == f"{name}.{version}"
+            if (name, version) not in self.nupkgs:
+                raise Missing(url)
+            return self.nupkgs[(name, version)]
+        for repository in (registries.CENTRAL, registries.GOOGLE, registries.PLUGINS, *set(self.mavenrepo.values())):
+            if url.startswith(repository + "/"):
+                path = url[len(repository) + 1:].split("/")
+                group, artifact, version = ".".join(path[:-3]), path[-3], path[-2]
+                assert path[-1] == f"{artifact}-{version}.pom"
+                if self.mavenrepo.get(f"{group}:{artifact}", registries.CENTRAL) != repository:
+                    raise Missing(url)
+                moment = self.versions("maven", f"{group}:{artifact}").get(version)
+                if moment is None:
+                    raise Missing(url)
+                return moment
+        raise Missing(url)
 
     def checksums(self, url: str) -> str:
         if "sumdb" in self.down:
@@ -108,6 +142,27 @@ class FakeRegistry:
             if moment is None:
                 raise Missing(url)
             return {"Version": unescape(match.group(2)), "Time": moment.strftime("%Y-%m-%dT%H:%M:%SZ")}
+        if parsed.netloc == "api.nuget.org":
+            leaf = re.fullmatch(r"/v3/registration5-gz-semver2/([^/]+)/([^/]+)\.json", path)
+            if leaf:
+                name, version = leaf.groups()
+                assert name == name.lower() and version == version.lower(), "nuget.org paths are lower case"
+                moment = self.versions("nuget", name).get(version)
+                if moment is None:
+                    raise Missing(url)
+                hidden = (name, version) in self.unlisted
+                return {
+                    "@id": url,
+                    "catalogEntry": f"https://api.nuget.org/v3/catalog0/data/2026.01.01.00.00.00/{name}.{version}.json",
+                    "listed": not hidden,
+                    "published": "1900-01-01T00:00:00+00:00" if hidden else moment.isoformat(),
+                }
+            catalog = re.fullmatch(r"/v3/catalog0/data/[^/]+/(.+)\.json", path)
+            for (ecosystem, name), versions in self.times.items():
+                for version, moment in versions.items():
+                    if ecosystem == "nuget" and catalog and catalog.group(1) == f"{name}.{version}":
+                        return {"id": name, "version": version, "created": iso(moment), "published": "1900-01-01T00:00:00Z", "listed": False}
+            raise Missing(url)
         if parsed.netloc == "index.golang.org":
             if "sumdb" in self.down:
                 raise Unreachable("index: HTTP 429")
@@ -145,6 +200,8 @@ class FakeRegistry:
 def fake(monkeypatch) -> FakeRegistry:
     registry = FakeRegistry()
     monkeypatch.setattr(registries, "fetchtext", registry.fetchtext)
+    monkeypatch.setattr(registries, "fetchmodified", registry.modified)
+    monkeypatch.delenv("UNRIPE_MAVEN_REPOS", raising=False)
     for name in ("GOPROXY", "GOSUMDB", "GONOSUMDB", "GOPRIVATE"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("UNRIPE_NPM_REGISTRY", raising=False)

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 # the registries unripe can ask for a publish time
-ECOSYSTEMS = ("npm", "pypi", "cargo", "go", "composer", "rubygems")
+ECOSYSTEMS = ("npm", "pypi", "cargo", "go", "composer", "rubygems", "nuget", "maven")
 REGISTRY = {
     "npm": "the npm registry",
     "pypi": "PyPI",
@@ -14,6 +14,8 @@ REGISTRY = {
     "go": "the Go module proxy",
     "composer": "Packagist",
     "rubygems": "rubygems.org",
+    "nuget": "nuget.org",
+    "maven": "the Maven repositories (add more with maven-repositories)",
 }
 STATES = ("unripe", "unknown", "ok", "excluded")
 

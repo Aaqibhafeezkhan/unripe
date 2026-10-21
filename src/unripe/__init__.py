@@ -11,7 +11,7 @@ Library use:
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = ["__version__", "scan"]
 
@@ -35,7 +35,7 @@ def scan(
     from unripe.registries import Cache, Registries, cachedir
 
     policy = Policy(min_age=duration(min_age), exclude=list(exclude))
-    registries = Registries(Cache(cachedir() if cache else None))
+    registries = Registries(Cache(cachedir() if cache else None), mavenrepos=policy.maven_repositories)
     result = check(paths or ["."], policy, registries, since=since)
     if result.unreadable:
         raise Problem("; ".join(message for _, message in result.unreadable))

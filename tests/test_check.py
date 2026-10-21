@@ -236,6 +236,8 @@ def test_scan_is_the_library_entry_point(fake, tmp_path):
         ("pnpm-v6/pnpm-lock.yaml", "npm", "react", "18.2.0", "  /react@18.2.0:"),
         ("go/go.mod", "go", "github.com/pkg/errors", "v0.9.1", "require github.com/pkg/errors v0.9.1 // indirect"),
         ("npm-v3/package-lock.json", "npm", "ms", "2.1.2", '    "node_modules/is-number/node_modules/ms": {'),
+        ("nuget/packages.lock.json", "nuget", "System.Text.Json", "8.0.5", '      "System.Text.Json": {'),
+        ("gradle/gradle.lockfile", "maven", "com.fasterxml.jackson.core:jackson-core", "2.22.2", "com.fasterxml.jackson.core:jackson-core:2.22.2=compileClasspath"),
     ],
 )
 def test_line_points_at_the_locked_entry(lockfile, ecosystem, name, version, text):
