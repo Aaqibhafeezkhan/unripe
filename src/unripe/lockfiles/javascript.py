@@ -29,6 +29,18 @@ def split(spec: str) -> tuple[str, str]:
     return spec[:at], spec[at + 1:]
 
 
+def registry(resolved: str) -> bool:
+    """
+    Whether a `resolved` URL is a registry tarball, like
+    https://registry.npmjs.org/@scope/name/-/name-1.2.3.tgz. Git, file and
+    direct tarball URLs (codeload.github.com and the like) are not. No URL at
+    all is taken as the registry: older lockfiles leave it out.
+    """
+    if not resolved:
+        return True
+    return resolved.startswith(("http://", "https://")) and "/-/" in resolved
+
+
 def package(name: str, version: str, lockfile: str) -> Package | None:
     # an npm alias locks the real package under another name: `npm:real@1.2.3`
     if version.startswith("npm:"):
@@ -49,8 +61,7 @@ def packagelock(text: str, lockfile: str) -> list[Package]:
                 continue
             if entry.get("link") or entry.get("inBundle"):
                 continue
-            resolved = str(entry.get("resolved") or "")
-            if resolved and not resolved.startswith(("http://", "https://")):
+            if not registry(str(entry.get("resolved") or "")):
                 continue
             name = entry.get("name") or key.rsplit("node_modules/", 1)[1]
             item = package(name, str(entry.get("version") or ""), lockfile)
@@ -144,9 +155,7 @@ def yarn(text: str, lockfile: str) -> list[Package]:
         else:
             resolved = fields.get("resolved", "")
             if resolved:
-                # registry tarballs look like https://registry.yarnpkg.com/@scope/name/-/name-1.2.3.tgz;
-                # anything else (codeload.github.com, git, file) did not come from npm
-                if not resolved.startswith(("http://", "https://")) or "/-/" not in resolved:
+                if not registry(resolved):
                     return
                 name = urllib.parse.unquote(resolved.split("/-/", 1)[0].split("/", 3)[-1])
             else:

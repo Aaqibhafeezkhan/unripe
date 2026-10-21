@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import tomllib
+from datetime import datetime, timezone
 
 from unripe.model import Package
 
@@ -35,8 +36,22 @@ def uv(text: str, lockfile: str) -> list[Package]:
         if not isinstance(source, dict) or "registry" not in source or not pypi(source):
             continue
         if entry.get("name") and entry.get("version"):
-            found.append(Package("pypi", normal(entry["name"]), str(entry["version"]), lockfile))
+            found.append(Package("pypi", normal(entry["name"]), str(entry["version"]), lockfile, uploaded(entry)))
     return found
+
+
+def uploaded(entry: dict) -> datetime | None:
+    """uv.lock revision 3 and later records each file's upload time; the earliest is the publish time."""
+    files = [entry.get("sdist")] + list(entry.get("wheels") or [])
+    stamps = []
+    for item in files:
+        if isinstance(item, dict) and item.get("upload-time"):
+            try:
+                stamp = datetime.fromisoformat(str(item["upload-time"]).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            stamps.append(stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc))
+    return min(stamps) if stamps else None
 
 
 def poetry(text: str, lockfile: str) -> list[Package]:

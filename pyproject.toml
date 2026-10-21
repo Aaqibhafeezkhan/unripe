@@ -44,3 +44,4 @@ packages = ["src/unripe"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src", "tests"]

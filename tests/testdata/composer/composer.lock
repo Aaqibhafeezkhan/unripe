@@ -1,0 +1,77 @@
+{
+    "_readme": [
+        "This file locks the dependencies of your project to a known state",
+        "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
+        "This file is @generated automatically"
+    ],
+    "content-hash": "8f3c1b2a4d5e6f7a8b9c0d1e2f3a4b5c",
+    "packages": [
+        {
+            "name": "acme/dev-thing",
+            "version": "dev-main",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/acme/dev-thing.git",
+                "reference": "0123456789abcdef0123456789abcdef01234567"
+            },
+            "time": "2024-01-01T00:00:00+00:00",
+            "type": "library"
+        },
+        {
+            "name": "monolog/monolog",
+            "version": "3.5.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/Seldaek/monolog.git",
+                "reference": "c915e2634718dbc8a4a15c61b0e62e7a44e14448"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/Seldaek/monolog/zipball/c915e2634718dbc8a4a15c61b0e62e7a44e14448",
+                "reference": "c915e2634718dbc8a4a15c61b0e62e7a44e14448",
+                "shasum": ""
+            },
+            "require": {
+                "php": ">=8.1",
+                "psr/log": "^2.0 || ^3.0"
+            },
+            "time": "2023-10-27T15:32:31+00:00",
+            "type": "library"
+        },
+        {
+            "name": "old/no-zone",
+            "version": "v1.0.0",
+            "time": "2015-10-02 12:00:00",
+            "type": "library"
+        },
+        {
+            "name": "psr/log",
+            "version": "3.0.0",
+            "time": "2021-07-14T16:46:02+00:00",
+            "type": "library"
+        },
+        {
+            "name": "symfony/console",
+            "version": "v7.1.0",
+            "type": "library"
+        }
+    ],
+    "packages-dev": [
+        {
+            "name": "phpunit/phpunit",
+            "version": "10.5.10",
+            "time": "2024-02-04T09:07:51+00:00",
+            "type": "library"
+        }
+    ],
+    "aliases": [],
+    "minimum-stability": "stable",
+    "stability-flags": [],
+    "prefer-stable": false,
+    "prefer-lowest": false,
+    "platform": {
+        "php": ">=8.1"
+    },
+    "platform-dev": [],
+    "plugin-api-version": "2.6.0"
+}
