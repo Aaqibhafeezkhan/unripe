@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import threading
 import time
 import urllib.error
@@ -20,6 +21,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from unripe import __version__
 from unripe.model import Package
@@ -43,15 +45,15 @@ def when(text: str) -> datetime:
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
 
 
-def fetch(url: str) -> dict | list:
-    """GET some JSON, retrying the failures worth retrying. A 404 is an answer, not a failure."""
+def fetchtext(url: str, accept: str = "*/*") -> str:
+    """GET a body as text, retrying the failures worth retrying. A 404 is an answer, not a failure."""
     delay = 1.0
     last = ""
     for attempt in range(TRIES):
-        request = urllib.request.Request(url, headers={"User-Agent": AGENT, "Accept": "application/json"})
+        request = urllib.request.Request(url, headers={"User-Agent": AGENT, "Accept": accept})
         try:
             with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-                return json.loads(response.read().decode("utf-8"))
+                return response.read().decode("utf-8")
         except urllib.error.HTTPError as error:
             if error.code in (404, 410):
                 raise Missing(url) from error
@@ -69,6 +71,15 @@ def fetch(url: str) -> dict | list:
     raise Unreachable(f"{url}: {last}")
 
 
+def fetch(url: str) -> dict | list:
+    """GET some JSON. A body that is not JSON means the registry is not answering properly."""
+    text = fetchtext(url, "application/json")
+    try:
+        return json.loads(text)
+    except ValueError as error:
+        raise Unreachable(f"{url}: answered with something that is not JSON") from error
+
+
 class Cache:
     """Publish times on disk, one JSON file per ecosystem. Safe to delete at any time."""
 
@@ -83,7 +94,9 @@ class Cache:
             self.data[ecosystem] = {}
             if self.directory:
                 try:
-                    self.data[ecosystem] = json.loads((self.directory / f"{ecosystem}.json").read_text("utf-8"))
+                    loaded = json.loads((self.directory / f"{ecosystem}.json").read_text("utf-8"))
+                    if isinstance(loaded, dict):
+                        self.data[ecosystem] = loaded
                 except (OSError, ValueError):
                     pass
         return self.data[ecosystem]
@@ -91,7 +104,10 @@ class Cache:
     def get(self, package: Package) -> datetime | None:
         with self.lock:
             value = self.table(package.ecosystem).get(f"{package.name}@{package.version}")
-        return when(value) if value else None
+        try:
+            return when(value) if value else None
+        except (TypeError, ValueError):
+            return None
 
     def put(self, ecosystem: str, name: str, version: str, published: datetime) -> None:
         with self.lock:
@@ -106,7 +122,7 @@ class Cache:
                 self.directory.mkdir(parents=True, exist_ok=True)
                 for ecosystem in self.dirty:
                     target = self.directory / f"{ecosystem}.json"
-                    temporary = target.with_suffix(".tmp")
+                    temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
                     temporary.write_text(json.dumps(self.data[ecosystem], sort_keys=True), "utf-8")
                     os.replace(temporary, target)
                 self.dirty.clear()
@@ -115,11 +131,10 @@ class Cache:
 
 
 def cachedir() -> Path:
-    base = os.environ.get("UNRIPE_CACHE") or os.environ.get("XDG_CACHE_HOME")
     if os.environ.get("UNRIPE_CACHE"):
-        return Path(base)
-    if base:
-        return Path(base) / "unripe"
+        return Path(os.environ["UNRIPE_CACHE"])
+    if os.environ.get("XDG_CACHE_HOME"):
+        return Path(os.environ["XDG_CACHE_HOME"]) / "unripe"
     if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
         return Path(os.environ["LOCALAPPDATA"]) / "unripe" / "cache"
     return Path.home() / ".cache" / "unripe"
@@ -130,14 +145,41 @@ def goescape(module: str) -> str:
     return "".join(f"!{c.lower()}" if c.isupper() else c for c in module)
 
 
+def goproxy() -> str:
+    """The first real proxy in GOPROXY, or the public one."""
+    for entry in re.split(r"[,|]", os.environ.get("GOPROXY") or ""):
+        entry = entry.strip()
+        if entry and entry not in ("direct", "off"):
+            return entry.rstrip("/")
+    return "https://proxy.golang.org"
+
+
+def crateindex(name: str) -> str:
+    """Where a crate lives in the sparse index: `se/rd/serde`, `3/s/syn`, `2/cc`, `1/a`."""
+    name = name.lower()
+    if len(name) <= 2:
+        return f"{len(name)}/{name}"
+    if len(name) == 3:
+        return f"3/{name[0]}/{name}"
+    return f"{name[:2]}/{name[2:4]}/{name}"
+
+
 class Registries:
     """Looks publish times up, through the cache. Thread-safe: unripe asks many at once."""
 
-    def __init__(self, cache: Cache, npm: str = "https://registry.npmjs.org", pypi: str = "https://pypi.org"):
+    def __init__(self, cache: Cache, npmurl: str | None = None, pypiurl: str | None = None):
         self.cache = cache
-        self.npm = npm.rstrip("/")
-        self.pypi = pypi.rstrip("/")
-        # one npm document holds every version's time; fetch each package once
+        self.npmurl = (npmurl or os.environ.get("UNRIPE_NPM_REGISTRY") or "https://registry.npmjs.org").rstrip("/")
+        self.pypiurl = (pypiurl or os.environ.get("UNRIPE_PYPI_URL") or "https://pypi.org").rstrip("/")
+        self.lookups: dict[str, Callable[[Package], datetime]] = {
+            "npm": self.npm,
+            "pypi": self.pypi,
+            "cargo": self.cargo,
+            "go": self.go,
+            "composer": self.composer,
+            "rubygems": self.rubygems,
+        }
+        # registries whose one answer covers every version are asked once per package
         self.pending: dict[str, threading.Lock] = {}
         self.guard = threading.Lock()
 
@@ -147,7 +189,9 @@ class Registries:
         cached = self.cache.get(package)
         if cached:
             return cached
-        lookup = getattr(self, package.ecosystem)
+        lookup = self.lookups.get(package.ecosystem)
+        if lookup is None:
+            raise Missing(f"unripe has no registry for {package.ecosystem}")
         stamp = lookup(package)
         self.cache.put(package.ecosystem, package.name, package.version, stamp)
         return stamp
@@ -156,71 +200,101 @@ class Registries:
         with self.guard:
             return self.pending.setdefault(key, threading.Lock())
 
-    def npm_(self, package: Package) -> datetime:  # pragma: no cover - named to keep getattr simple
-        return self.npm_lookup(package)
-
-    def npm_lookup(self, package: Package) -> datetime:
-        with self.once(f"npm:{package.name}"):
+    def every(self, package: Package, fetchall: Callable[[], dict[str, datetime]]) -> datetime:
+        """
+        For a registry whose one answer covers every version of a package: fetch
+        it once, cache every version's time, then answer for the version asked about.
+        """
+        with self.once(f"{package.ecosystem}:{package.name}"):
             cached = self.cache.get(package)
             if cached:
                 return cached
-            name = urllib.parse.quote(package.name, safe="@")
-            data = fetch(f"{self.npm}/{name.replace('/', '%2F')}")
-            times = data.get("time") or {}
+            times = fetchall()
             for version, stamp in times.items():
-                if version not in ("created", "modified"):
-                    try:
-                        self.cache.put("npm", package.name, version, when(stamp))
-                    except ValueError:
-                        continue
+                self.cache.put(package.ecosystem, package.name, version, stamp)
             if package.version not in times:
-                raise Missing(f"{package} is not in the npm registry")
-            return when(times[package.version])
+                raise Missing(f"{package} is not in the registry")
+            return times[package.version]
 
-    def pypi_lookup(self, package: Package) -> datetime:
-        data = fetch(f"{self.pypi}/pypi/{urllib.parse.quote(package.name)}/{urllib.parse.quote(package.version)}/json")
-        stamps = [when(f["upload_time_iso_8601"]) for f in data.get("urls") or [] if f.get("upload_time_iso_8601")]
+    def npm(self, package: Package) -> datetime:
+        def fetchall() -> dict[str, datetime]:
+            data = fetch(f"{self.npmurl}/{urllib.parse.quote(package.name, safe='@')}")
+            times = {}
+            for version, stamp in ((data.get("time") if isinstance(data, dict) else None) or {}).items():
+                if version in ("created", "modified"):
+                    continue
+                try:
+                    times[version] = when(stamp)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+            return times
+
+        return self.every(package, fetchall)
+
+    def pypi(self, package: Package) -> datetime:
+        name, version = urllib.parse.quote(package.name), urllib.parse.quote(package.version)
+        data = fetch(f"{self.pypiurl}/pypi/{name}/{version}/json")
+        files = data.get("urls") if isinstance(data, dict) else None
+        stamps = [when(f["upload_time_iso_8601"]) for f in files or [] if f.get("upload_time_iso_8601")]
         if not stamps:
             raise Missing(f"{package} has no files on PyPI")
         # the first file uploaded is when the version became installable
         return min(stamps)
 
-    def cargo_lookup(self, package: Package) -> datetime:
-        data = fetch(f"https://crates.io/api/v1/crates/{urllib.parse.quote(package.name)}/{urllib.parse.quote(package.version)}")
-        stamp = (data.get("version") or {}).get("created_at")
-        if not stamp:
-            raise Missing(f"{package} is not on crates.io")
-        return when(stamp)
+    def cargo(self, package: Package) -> datetime:
+        def fetchall() -> dict[str, datetime]:
+            # the sparse index is a CDN that carries every version's publish time,
+            # and is what crates.io asks tools to use instead of its rate limited API
+            body = fetchtext(f"https://index.crates.io/{crateindex(package.name)}")
+            times = {}
+            for line in body.splitlines():
+                try:
+                    entry = json.loads(line)
+                    times[str(entry["vers"])] = when(entry["pubtime"])
+                except (ValueError, KeyError, TypeError, AttributeError):
+                    continue
+            return times
 
-    def go_lookup(self, package: Package) -> datetime:
-        proxy = (os.environ.get("GOPROXY") or "https://proxy.golang.org").split(",")[0].split("|")[0]
-        if proxy in ("direct", "off"):
-            proxy = "https://proxy.golang.org"
-        data = fetch(f"{proxy.rstrip('/')}/{goescape(package.name)}/@v/{goescape(package.version)}.info")
-        if not data.get("Time"):
+        return self.every(package, fetchall)
+
+    def go(self, package: Package) -> datetime:
+        data = fetch(f"{goproxy()}/{goescape(package.name)}/@v/{goescape(package.version)}.info")
+        if not isinstance(data, dict) or not data.get("Time"):
             raise Missing(f"{package} has no time in the module proxy")
         return when(data["Time"])
 
-    def composer_lookup(self, package: Package) -> datetime:
-        data = fetch(f"https://repo.packagist.org/p2/{package.name}.json")
-        for entry in (data.get("packages") or {}).get(package.name) or []:
-            if str(entry.get("version", "")).lstrip("v") == package.version and entry.get("time"):
-                return when(entry["time"])
-        raise Missing(f"{package} is not on packagist")
+    def composer(self, package: Package) -> datetime:
+        def fetchall() -> dict[str, datetime]:
+            data = fetch(f"https://repo.packagist.org/p2/{package.name}.json")
+            versions = ((data.get("packages") if isinstance(data, dict) else None) or {}).get(package.name) or []
+            times = {}
+            # p2 files are minified: each entry lists only what changed since the one before
+            current: dict = {}
+            for entry in versions:
+                for key, value in entry.items():
+                    if value == "__unset":
+                        current.pop(key, None)
+                    else:
+                        current[key] = value
+                if current.get("version") and current.get("time"):
+                    try:
+                        times[str(current["version"]).lstrip("v")] = when(str(current["time"]))
+                    except ValueError:
+                        continue
+            return times
 
-    def rubygems_lookup(self, package: Package) -> datetime:
-        number, _, platform = package.version.partition("-")
-        data = fetch(f"https://rubygems.org/api/v1/versions/{urllib.parse.quote(package.name)}.json")
-        for entry in data if isinstance(data, list) else []:
-            if entry.get("number") == number and (entry.get("platform") or "ruby") == (platform or "ruby"):
-                return when(entry["created_at"])
-        raise Missing(f"{package} is not on rubygems.org")
+        return self.every(package, fetchall)
 
-    def __getattr__(self, name: str):
-        # `published` looks registries up by ecosystem name: npm -> npm_lookup
-        if name in ("npm", "pypi"):
-            raise AttributeError(name)
-        lookup = f"{name}_lookup"
-        if lookup in type(self).__dict__:
-            return getattr(self, lookup)
-        raise AttributeError(name)
+    def rubygems(self, package: Package) -> datetime:
+        def fetchall() -> dict[str, datetime]:
+            data = fetch(f"https://rubygems.org/api/v1/versions/{urllib.parse.quote(package.name)}.json")
+            times = {}
+            for entry in data if isinstance(data, list) else []:
+                number, platform = entry.get("number"), entry.get("platform") or "ruby"
+                if not number or not entry.get("created_at"):
+                    continue
+                # Gemfile.lock writes platform gems as `1.2.3-x86_64-linux`
+                times[number if platform == "ruby" else f"{number}-{platform}"] = when(entry["created_at"])
+            return times
+
+        return self.every(package, fetchall)

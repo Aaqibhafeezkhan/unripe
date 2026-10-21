@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.parse
 
 from unripe.model import Package
 
@@ -89,21 +90,38 @@ def pnpm(text: str, lockfile: str) -> list[Package]:
         if not line.startswith(" "):
             inside = line.rstrip() == "packages:"
             continue
-        if not inside or not line.startswith("  ") or line.startswith("   ") or not line.rstrip().endswith(":"):
+        if not inside or line.startswith("   "):
             continue
-        key = line.strip()[:-1].strip("'\"")
+        match = PNPMKEY.match(line)
+        if not match:
+            continue
+        key = match.group(1).strip("'\"")
         if any(marker in key for marker in ("link:", "file:", "git+", "github.com/", "://")):
             continue
-        key = key.lstrip("/").split("(", 1)[0]
-        name, version = split(key)
-        if not version or "/" in version:
-            # v5 keys separate the version with a slash
-            name, _, version = key.rpartition("/")
-        version = version.split("_", 1)[0]
+        name, version = pnpmkey(key.lstrip("/").split("(", 1)[0])
         item = package(name, version, lockfile)
         if item:
             found.append(item)
     return found
+
+
+# a two-space key in the packages map, block style or with an inline `{}` value
+PNPMKEY = re.compile(r"^  (\S.*?):(?:\s.*)?$")
+
+
+def pnpmkey(key: str) -> tuple[str, str]:
+    """
+    A packages key without its leading slash and `(peer)` suffix, as name and version.
+
+    v5 writes `name/1.2.3` and `@scope/name/1.2.3_peer@4.5.6`; v6 and later
+    write `name@1.2.3`. The v5 form is tried first, because splitting a v5
+    key with a peer suffix at its last `@` lands inside the suffix.
+    """
+    name, _, version = key.rpartition("/")
+    version = version.split("_", 1)[0]
+    if name and semver(version):
+        return name, version
+    return split(key)
 
 
 def yarn(text: str, lockfile: str) -> list[Package]:
@@ -125,17 +143,20 @@ def yarn(text: str, lockfile: str) -> list[Package]:
             item = package(name, rest, lockfile)
         else:
             resolved = fields.get("resolved", "")
-            name = ""
-            if "/-/" in resolved:
-                # https://registry.yarnpkg.com/@scope/name/-/name-1.2.3.tgz
-                name = resolved.split("/-/", 1)[0].split("/", 3)[-1]
-            if not name:
+            if resolved:
+                # registry tarballs look like https://registry.yarnpkg.com/@scope/name/-/name-1.2.3.tgz;
+                # anything else (codeload.github.com, git, file) did not come from npm
+                if not resolved.startswith(("http://", "https://")) or "/-/" not in resolved:
+                    return
+                name = urllib.parse.unquote(resolved.split("/-/", 1)[0].split("/", 3)[-1])
+            else:
                 first = spec.split(",", 1)[0].strip().strip("\"'")
                 if "@npm:" in first:
                     first = first.split("@npm:", 1)[1]
-                name = split(first)[0]
-            if resolved and not resolved.startswith(("http://", "https://")):
-                return
+                name, wanted = split(first)
+                if ":" in wanted or "/" in wanted:
+                    # file:, link:, git and github ranges
+                    return
             item = package(name, version, lockfile)
         if item:
             found.append(item)
@@ -212,3 +233,8 @@ def bun(text: str, lockfile: str) -> list[Package]:
         if item:
             found.append(item)
     return found
+
+
+def bunbinary(text: str, lockfile: str) -> list[Package]:
+    """bun.lockb, bun's old binary lockfile, which unripe does not read."""
+    raise ValueError("bun.lockb is binary. bun 1.2 and later write a text bun.lock; run `bun install --save-text-lockfile` to make one")

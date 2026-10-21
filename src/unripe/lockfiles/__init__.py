@@ -18,6 +18,7 @@ PARSERS: dict[str, Parser] = {
     "pnpm-lock.yaml": javascript.pnpm,
     "yarn.lock": javascript.yarn,
     "bun.lock": javascript.bun,
+    "bun.lockb": javascript.bunbinary,
     "uv.lock": python.uv,
     "poetry.lock": python.poetry,
     "Pipfile.lock": python.pipfile,
@@ -27,8 +28,8 @@ PARSERS: dict[str, Parser] = {
     "Gemfile.lock": others.gemfile,
 }
 REQUIREMENTS = re.compile(r"^(requirements|constraints)[\w.-]*\.txt$", re.IGNORECASE)
-# never worth walking into: installed copies of dependencies, builds and caches
-SKIP = {"node_modules", ".git", ".hg", ".venv", "venv", "env", "vendor", "target", "dist", "build", "__pycache__", ".tox", ".nox", ".cache"}
+# never worth walking into: installed copies of dependencies, builds, caches, and go's test inputs
+SKIP = {"node_modules", ".git", ".hg", ".venv", "venv", "env", "vendor", "target", "dist", "build", "__pycache__", ".tox", ".nox", ".cache", "testdata"}
 
 
 class Unreadable(Exception):
@@ -56,6 +57,9 @@ def find(paths: list[str]) -> list[Path]:
         for root, dirs, files in os.walk(path):
             dirs[:] = sorted(d for d in dirs if d not in SKIP)
             for name in sorted(files):
+                # bun 1.2 leaves the old binary lockfile next to the new text one
+                if name == "bun.lockb" and "bun.lock" in files:
+                    continue
                 if parser(name):
                     found.append(Path(root) / name)
     return found

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import tomllib
-from datetime import datetime
+from datetime import datetime, timezone
 
 from unripe.model import Package
 
@@ -31,27 +31,26 @@ def gomod(text: str, lockfile: str) -> list[Package]:
     build, while go.sum also keeps old versions that are never built.
     """
     required: dict[str, str] = {}
+    # module -> its replacement module and version, or None for a local directory
     replaced: dict[str, tuple[str, str] | None] = {}
-    block = None
+    block = None  # "require" or "replace" while inside a `require (` ... `)` block
     for raw in text.splitlines():
-        line = raw.split("//", 1)[0].rstrip()
-        if not line.strip():
+        line = raw.split("//", 1)[0].strip()
+        if not line:
             continue
         if block:
-            if line.strip() == ")":
+            if line == ")":
                 block = None
-                continue
-            body = line
-        else:
-            words = line.split(None, 1)
-            if words[0] in ("require", "replace") and len(words) > 1:
-                if words[1].strip() == "(":
-                    block = words[0]
-                    continue
-                block_word, body = words[0], words[1]
-                handle(block_word, body, required, replaced)
+            else:
+                directive(block, line, required, replaced)
             continue
-        handle(block, body, required, replaced)
+        verb, _, body = line.partition(" ")
+        if verb not in ("require", "replace"):
+            continue
+        if body.strip() == "(":
+            block = verb
+        else:
+            directive(verb, body, required, replaced)
     found = []
     for module, version in required.items():
         if module in replaced:
@@ -63,18 +62,19 @@ def gomod(text: str, lockfile: str) -> list[Package]:
     return found
 
 
-def handle(kind: str, body: str, required: dict, replaced: dict) -> None:
-    if kind == "require":
+def directive(verb: str, body: str, required: dict, replaced: dict) -> None:
+    """One `require` or `replace` line, inside a block or not."""
+    if verb == "require":
         match = GOLINE.match(body)
         if match:
             required[match.group(1)] = match.group(2)
         return
     left, arrow, right = body.partition("=>")
-    if not arrow:
+    if not arrow or not left.split():
         return
     module = left.split()[0]
     target = right.split()
-    if not target or target[0].startswith((".", "/")) or len(target) < 2:
+    if len(target) < 2 or target[0].startswith((".", "/")):
         # replaced by a local directory: nothing to look up
         replaced[module] = None
     else:
@@ -93,9 +93,12 @@ def composer(text: str, lockfile: str) -> list[Package]:
             published = None
             if entry.get("time"):
                 try:
-                    published = datetime.fromisoformat(str(entry["time"]))
+                    published = datetime.fromisoformat(str(entry["time"]).replace("Z", "+00:00"))
                 except ValueError:
                     published = None
+                if published and not published.tzinfo:
+                    # old composer versions wrote times without a zone; packagist uses UTC
+                    published = published.replace(tzinfo=timezone.utc)
             found.append(Package("composer", name, version.lstrip("v"), lockfile, published))
     return found
 
