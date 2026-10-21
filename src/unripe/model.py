@@ -7,6 +7,15 @@ from datetime import datetime
 
 # the registries unripe can ask for a publish time
 ECOSYSTEMS = ("npm", "pypi", "cargo", "go", "composer", "rubygems")
+REGISTRY = {
+    "npm": "the npm registry",
+    "pypi": "PyPI",
+    "cargo": "crates.io",
+    "go": "the Go module proxy",
+    "composer": "Packagist",
+    "rubygems": "rubygems.org",
+}
+STATES = ("unripe", "unknown", "ok", "excluded")
 
 
 @dataclass(frozen=True, order=True)
@@ -45,6 +54,8 @@ class Finding:
     published: datetime | None = None
     age_seconds: float | None = None
     reason: str = ""
+    # every lockfile that locks this version, with the line it is on when known
+    locations: tuple[tuple[str, int | None], ...] = ()
 
     @property
     def age_days(self) -> float | None:

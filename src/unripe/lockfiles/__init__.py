@@ -48,11 +48,20 @@ def parser(path: str | Path) -> Parser | None:
 def find(paths: list[str]) -> list[Path]:
     """Every lockfile in the given files and directories, directories walked recursively."""
     found: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(path: Path) -> None:
+        # the same file named twice, or inside two given directories, is read once
+        real = path.resolve()
+        if real not in seen:
+            seen.add(real)
+            found.append(path)
+
     for raw in paths or ["."]:
         path = Path(raw)
         if path.is_file():
             if parser(path):
-                found.append(path)
+                add(path)
             continue
         for root, dirs, files in os.walk(path):
             dirs[:] = sorted(d for d in dirs if d not in SKIP)
@@ -61,7 +70,7 @@ def find(paths: list[str]) -> list[Path]:
                 if name == "bun.lockb" and "bun.lock" in files:
                     continue
                 if parser(name):
-                    found.append(Path(root) / name)
+                    add(Path(root) / name)
     return found
 
 
