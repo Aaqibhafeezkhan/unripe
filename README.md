@@ -4,7 +4,7 @@
 [![CI](https://github.com/TexWoW/unripe/actions/workflows/ci.yml/badge.svg)](https://github.com/TexWoW/unripe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-<!-- mcp-name: io.github.TexWoW/unripe -->
+<!-- mcp-name: io.github.texWoW/unripe -->
 
 unripe checks your lockfiles and fails if any dependency version was
 published too recently. The default is 3 days. It works across npm, pnpm,
@@ -247,7 +247,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: TexWoW/unripe@v0.6.0
+      - uses: TexWoW/unripe@v0.6.1
         with:
           min-age: 3d
           comment: true
@@ -295,7 +295,7 @@ If you want the results as code scanning alerts, write SARIF and upload it
 (this needs `security-events: write`):
 
 ```yaml
-      - uses: TexWoW/unripe@v0.6.0
+      - uses: TexWoW/unripe@v0.6.1
         with:
           sarif: unripe.sarif
       - uses: github/codeql-action/upload-sarif@v4
@@ -309,7 +309,7 @@ If you want the results as code scanning alerts, write SARIF and upload it
 ```yaml
 repos:
   - repo: https://github.com/TexWoW/unripe
-    rev: v0.6.0
+    rev: v0.6.1
     hooks:
       - id: unripe
 ```
@@ -321,7 +321,7 @@ you only want it to look at what the commit adds.
 
 ```yaml
 include:
-  - remote: https://raw.githubusercontent.com/TexWoW/unripe/v0.6.0/ci/gitlab.yml
+  - remote: https://raw.githubusercontent.com/TexWoW/unripe/v0.6.1/ci/gitlab.yml
 ```
 
 That adds an `unripe` job to the `test` stage. On merge requests it checks
@@ -342,7 +342,7 @@ their cooldowns too, so they stop opening pull requests unripe would fail.
 ## With AI coding agents
 
 ```bash
-claude mcp add unripe -- uvx unripe@0.6.0 mcp
+claude mcp add unripe -- uvx unripe@0.6.1 mcp
 ```
 
 `unripe mcp` is a Model Context Protocol server with three read-only tools:

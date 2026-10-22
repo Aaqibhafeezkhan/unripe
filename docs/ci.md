@@ -28,7 +28,7 @@ steps:
   - task: UsePythonVersion@0
     inputs:
       versionSpec: "3.12"
-  - script: python -m pip install --quiet unripe==0.6.0
+  - script: python -m pip install --quiet unripe==0.6.1
     displayName: Install unripe
   - script: |
       since=""
@@ -59,7 +59,7 @@ pipeline {
   stages {
     stage('unripe') {
       steps {
-        sh 'pip install --quiet --user unripe==0.6.0'
+        sh 'pip install --quiet --user unripe==0.6.1'
         sh '''
           since=""
           if [ -n "$CHANGE_TARGET" ]; then
@@ -92,7 +92,7 @@ jobs:
       - image: cimg/python:3.12
     steps:
       - checkout
-      - run: pip install --quiet unripe==0.6.0
+      - run: pip install --quiet unripe==0.6.1
       - run:
           name: unripe
           command: |
@@ -117,7 +117,7 @@ pipelines:
           name: unripe
           image: python:3.12
           script:
-            - pip install --quiet unripe==0.6.0
+            - pip install --quiet unripe==0.6.1
             - git fetch --quiet --depth=1 origin "$BITBUCKET_PR_DESTINATION_BRANCH"
             - unripe check --since "origin/$BITBUCKET_PR_DESTINATION_BRANCH" --report junit:test-results/unripe.xml
   default:
@@ -125,7 +125,7 @@ pipelines:
         name: unripe
         image: python:3.12
         script:
-          - pip install --quiet unripe==0.6.0
+          - pip install --quiet unripe==0.6.1
           - unripe check --report junit:test-results/unripe.xml
 ```
 
@@ -134,14 +134,14 @@ Bitbucket picks up JUnit files under `test-results/` by itself.
 ## Anything else
 
 ```bash
-python -m pip install unripe==0.6.0
+python -m pip install unripe==0.6.1
 unripe check --since origin/main
 ```
 
 or without installing anything into the job's Python:
 
 ```bash
-uvx unripe@0.6.0 check --since origin/main
+uvx unripe@0.6.1 check --since origin/main
 ```
 
 If the job sits behind a proxy that inspects TLS, point `UNRIPE_CA_BUNDLE`

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1 (2026-10-22)
+
+- The README names the MCP server the way the official MCP registry expects
+  (`io.github.texWoW/unripe`), so unripe can be listed there. No code changes.
+
 ## 0.6.0 (2026-10-22)
 
 New things to check:
