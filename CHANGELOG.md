@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.5.0 (2026-10-22)
+
+New things to check:
+
+- Deno: reads `deno.lock` (versions 3 to 5), with npm packages dated by the
+  npm registry and JSR packages by jsr.io.
+- `pylock.toml`, the standard Python lockfile from PEP 751, using its own
+  upload times when it has them.
+- GitHub Actions, with `--workflows` or `workflows = true`. Each `uses:` ref
+  is dated by the GitHub release that points at the same commit.
+- A version npm has unpublished now counts as unknown, since that is how npm
+  takes malicious versions down.
+
+Policy:
+
+- `[min-age-for]` sets a different minimum age for an ecosystem
+  (`npm = "7d"`) or a package pattern (`"npm:@types/*" = "1d"`).
+- `[[allow]]` lets one version through while it is too new, with a reason
+  and an `until` date. Allowed versions are reported as `allowed`. unripe says
+  when an entry has ended, is no longer needed, or matches nothing.
+- `allow-security-fixes = true` lets a too new version through when an
+  advisory on osv.dev names that exact version as the fix.
+- The config is found in parent directories up to the top of the git
+  repository, or wherever `UNRIPE_CONFIG` points.
+
+Reports:
+
+- A version that is too new comes with the newest version in the same line
+  that is old enough, for npm, PyPI, Cargo, Composer, RubyGems, NuGet and JSR.
+- New formats: `github` (annotations on the lockfile line), `codequality`
+  (GitLab) and `junit`. `--report FORMAT:FILE` writes any of them next to the
+  normal output, and `--json FILE` writes JSON.
+- Colour on a terminal, off with `NO_COLOR`.
+- The markdown report lists at most 50 versions, so a pull request comment
+  stays readable.
+
+Commands and options:
+
+- `unripe explain ECOSYSTEM NAME` without a version lists the recent
+  releases and the newest one that is old enough.
+- `unripe config` shows the settings in use and the cooldown settings your
+  package managers and bots have, and suggests the ones that are missing.
+- `unripe init` writes a starter `.unripe.toml`, and with `--github` a
+  workflow.
+- `--as-of TIME` checks as if it were then.
+- `--exit-zero` reports without failing. `--offline` uses only the cache.
+  `--no-suggest` skips the suggestions. `--verbose` also prints how long the
+  check took and how many requests it made.
+- Company CA bundles from `REQUESTS_CA_BUNDLE` or `UNRIPE_CA_BUNDLE`.
+
+CI:
+
+- The Action marks problems on the lockfile lines (`annotations`), can report
+  without failing (`fail: false`), can check workflows (`workflows: true`),
+  and has outputs: `result`, `unripe`, `unknown`, `report` and `json`.
+- The GitLab template feeds the merge request's code quality widget and test
+  report.
+- A second pre-commit hook, `unripe-changed`, checks only what a commit adds.
+- Tested on Python 3.14.
+
 ## 0.4.0 (2026-10-21)
 
 - The GitHub Action can comment on pull requests (`comment: true`). It posts

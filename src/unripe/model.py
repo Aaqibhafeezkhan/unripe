@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # the registries unripe can ask for a publish time
-ECOSYSTEMS = ("npm", "pypi", "cargo", "go", "composer", "rubygems", "nuget", "maven")
+ECOSYSTEMS = ("npm", "pypi", "cargo", "go", "composer", "rubygems", "nuget", "maven", "jsr", "actions")
 REGISTRY = {
     "npm": "the npm registry",
     "pypi": "PyPI",
@@ -16,8 +16,10 @@ REGISTRY = {
     "rubygems": "rubygems.org",
     "nuget": "nuget.org",
     "maven": "the Maven repositories (add more with maven-repositories)",
+    "jsr": "jsr.io",
+    "actions": "GitHub",
 }
-STATES = ("unripe", "unknown", "ok", "excluded")
+STATES = ("unripe", "unknown", "allowed", "ok", "excluded")
 
 
 @dataclass(frozen=True, order=True)
@@ -48,6 +50,7 @@ class Finding:
     - "ok": published long enough ago
     - "unripe": published more recently than the policy allows
     - "unknown": the registry could not say. never quietly treated as ok
+    - "allowed": too new or unknown, but let through by an allow entry or as a security fix
     - "excluded": skipped by an exclude rule
     """
 
@@ -58,6 +61,15 @@ class Finding:
     reason: str = ""
     # every lockfile that locks this version, with the line it is on when known
     locations: tuple[tuple[str, int | None], ...] = ()
+    # the minimum age that applied to this package
+    minimum: timedelta | None = None
+    # for a version that is too new: the newest version in the same line that is old enough, and when it was published
+    instead: tuple[str, datetime] | None = None
+
+    @property
+    def ripe(self) -> datetime | None:
+        """When the version becomes old enough."""
+        return self.published + self.minimum if self.published and self.minimum is not None else None
 
     @property
     def age_days(self) -> float | None:

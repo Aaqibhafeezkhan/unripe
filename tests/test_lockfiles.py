@@ -139,6 +139,19 @@ def test_uv_takes_upload_times_and_skips_editable_git_and_other_indexes():
     assert found["zope-interface"].published is None
 
 
+def test_pylock_takes_upload_times_and_skips_vcs_directories_and_other_indexes():
+    found = {p.name: p for p in parse("pylock/pylock.toml")}
+    assert {(p.name, p.version) for p in found.values()} == {("attrs", "25.1.0"), ("idna", "3.10")}
+    # the earliest file, the wheel, as a toml datetime
+    assert found["attrs"].published == datetime(2025, 1, 25, 11, 30, 10, tzinfo=timezone.utc)
+    assert found["idna"].published is None
+
+
+@pytest.mark.parametrize("name, hit", [("pylock.toml", True), ("pylock.dev.toml", True), ("pylock.a.b.toml", False), ("mypylock.toml", False)])
+def test_pylock_names(name, hit):
+    assert (lockfiles.parser(name) is not None) is hit
+
+
 def test_poetry_keeps_pypi_and_pypi_mirrors_only():
     assert pairs("poetry/poetry.lock") == {("certifi", "2024.2.2"), ("pytest", "8.0.0"), ("typing-extensions", "4.9.0")}
 
@@ -269,3 +282,55 @@ def test_find_skips_dotnet_and_gradle_build_output(tmp_path):
         (tmp_path / folder / "packages.lock.json").write_text("{}")
     (tmp_path / "packages.lock.json").write_text("{}")
     assert [p.relative_to(tmp_path).as_posix() for p in lockfiles.find([str(tmp_path)])] == ["packages.lock.json"]
+
+
+def test_deno_lock_npm_and_jsr_without_peers_remote_or_other_registries():
+    assert {(p.ecosystem, p.name, p.version) for p in parse("deno/deno.lock")} == {
+        ("npm", "@types/node", "22.15.15"),
+        ("npm", "chalk", "5.4.1"),
+        ("npm", "preact-render-to-string", "6.5.11"),
+        ("npm", "preact", "10.24.3"),
+        ("npm", "undici-types", "6.21.0"),
+        ("jsr", "@std/assert", "1.0.13"),
+        ("jsr", "@std/internal", "1.0.7"),
+    }
+
+
+def test_deno_lock_version_3_keeps_packages_in_one_table():
+    text = '{"version": "3", "packages": {"specifiers": {}, "jsr": {"@std/path@0.220.1": {"integrity": "x"}}, "npm": {"ms@2.1.3": {"integrity": "x", "dependencies": {}}}}, "remote": {}}'
+    assert {(p.ecosystem, p.name, p.version) for p in lockfiles.read(text, "deno.lock")} == {("jsr", "@std/path", "0.220.1"), ("npm", "ms", "2.1.3")}
+
+
+WORKFLOW = """\
+on: push
+jobs:
+  test:
+    uses: octo/shared/.github/workflows/test.yml@v2
+  build:
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: setup
+        uses: "actions/setup-node@v5"
+      - uses: ./.github/actions/local
+      - uses: docker://alpine:3.20
+      - run: echo "uses: fake/thing@v1"
+"""
+
+
+def test_workflows_list_actions_with_their_refs():
+    found = [(p.ecosystem, p.name, p.version) for p in lockfiles.read(WORKFLOW, ".github/workflows/ci.yml")]
+    assert found == [
+        ("actions", "octo/shared", "v2"),
+        ("actions", "actions/checkout", "3d3c42e5aac5ba805825da76410c181273ba90b1"),
+        ("actions", "actions/setup-node", "v5"),
+    ]
+
+
+def test_workflows_are_only_found_when_asked(tmp_path):
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text(WORKFLOW)
+    (tmp_path / "action.yml").write_text("runs:\n  steps:\n    - uses: actions/cache@v4\n")
+    (tmp_path / "docs.yml").write_text("uses: a/b@v1\n")
+    assert lockfiles.find([str(tmp_path)]) == []
+    names = sorted(p.name for p in lockfiles.find([str(tmp_path)], workflows=True))
+    assert names == ["action.yml", "ci.yml"]

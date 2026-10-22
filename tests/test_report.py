@@ -68,7 +68,7 @@ def test_json_has_every_finding():
     data = json.loads(render(result(), "json"))
     assert data["result"] == "fail" and data["exit_code"] == 1
     assert data["policy"] == {"min_age": "3d", "min_age_seconds": 259200, "unknown": "fail", "exclude": []}
-    assert data["summary"] == {"unripe": 1, "unknown": 1, "ok": 1, "excluded": 1}
+    assert data["summary"] == {"unripe": 1, "unknown": 1, "allowed": 0, "ok": 1, "excluded": 1}
     fresh = data["findings"][0]
     assert fresh["name"] == "fresh" and fresh["state"] == "unripe"
     assert fresh["published"] == "2026-10-20T07:00:00+00:00"
@@ -116,3 +116,67 @@ def test_markdown_escapes_pipes():
     odd = Finding(Package("npm", "a|b", "1.0.0"), "unknown", reason="x | y", locations=(("p", 1),))
     out = render(Result(findings=[odd], policy=Policy(), lockfiles=["p"], checked_at=NOW), "markdown")
     assert "a\\|b" in out and "x \\| y" in out
+
+
+def test_suggestions_allowed_versions_and_notes_are_reported():
+    from dataclasses import replace
+
+    base = result()
+    fresh = replace(base.findings[0], instead=("1.9.0", NOW - timedelta(days=12)))
+    let = Finding(Package("npm", "axios", "1.13.2"), "allowed", NOW - timedelta(hours=2), 7200, reason="allowed until 2026-10-25: CVE fix", locations=(("web/package-lock.json", 40),))
+    base.findings = [fresh, base.findings[1], let, *base.findings[2:]]
+    base.notes = ["the allow entry for left-pad is no longer needed: everything it covers is old enough now"]
+    out = render(base, "text")
+    assert "1.9.0 is old enough (published 2026-10-08)" in out
+    assert "allowed: 1 version too new or unknown, but let through" in out and "allowed until 2026-10-25: CVE fix" in out
+    assert "note: the allow entry for left-pad is no longer needed" in out
+    assert out.rstrip().endswith("fail: 1 unripe, 1 unknown, 1 allowed, 1 ok, 1 excluded")
+    table = render(base, "markdown")
+    assert "or use 1.9.0" in table and "| allowed | npm `axios` |" in table and "Note: the allow entry" in table
+    data = json.loads(render(base, "json"))
+    assert data["findings"][0]["instead"] == {"version": "1.9.0", "published": "2026-10-08T12:00:00+00:00"}
+    assert data["notes"] == base.notes
+
+
+def test_markdown_stops_after_fifty_rows():
+    many = result()
+    many.findings = [
+        Finding(Package("npm", f"p{index}", "1.0.0"), "unripe", NOW - timedelta(hours=1), 3600, locations=(("package-lock.json", index),))
+        for index in range(70)
+    ]
+    out = render(many, "markdown")
+    assert out.count("| too new |") == 50 and "And 20 more." in out
+
+
+def test_github_annotations():
+    out = render(result(unreadable=[("bun.lockb", "bun.lockb: binary, 100% unreadable")]), "github").splitlines()
+    assert out[0].startswith("::error file=web/package-lock.json,line=10,title=unripe%3A too new::npm fresh 2.0.0 was published 5h ago")
+    assert out[1].startswith("::error file=Cargo.lock,line=3,title=unripe%3A unknown age::cargo ghost 0.1.0: publish time unknown")
+    assert out[2] == "::error file=bun.lockb,title=unripe%3A unreadable::bun.lockb: binary, 100%25 unreadable"
+    assert out[-1].startswith("error: ")
+    assert render(result(unknown="warn"), "github").splitlines()[1].startswith("::warning ")
+
+
+def test_gitlab_code_quality():
+    issues = json.loads(render(result(), "codequality"))
+    assert [issue["check_name"] for issue in issues] == ["unripe/too-new", "unripe/unknown-age"]
+    assert issues[0]["location"] == {"path": "web/package-lock.json", "lines": {"begin": 10}}
+    assert issues[0]["severity"] == "critical" and len(issues[0]["fingerprint"]) == 64
+    assert json.loads(render(result(unknown="warn"), "codequality"))[1]["severity"] == "minor"
+
+
+def test_junit():
+    import xml.etree.ElementTree as tree
+
+    suite = tree.fromstring(render(result(), "junit")).find("testsuite")
+    assert suite.get("tests") == "4" and suite.get("failures") == "2" and suite.get("skipped") == "1"
+    cases = {case.get("name"): case for case in suite}
+    assert cases["fresh@2.0.0"].find("failure").get("type") == "unripe"
+    assert cases["idna@3.6"].find("failure") is None
+    assert cases["@myorg/ui@1.0.0"].find("skipped") is not None
+
+
+def test_colour_only_when_asked():
+    assert "\033[" not in render(result(), "text")
+    painted = render(result(), "text", color=True)
+    assert "\033[31munripe\033[0m: 1 version" in painted and "\033[31mfail\033[0m:" in painted

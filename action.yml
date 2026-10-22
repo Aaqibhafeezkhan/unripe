@@ -50,10 +50,39 @@ inputs:
     description: The token used to comment on pull requests.
     required: false
     default: ${{ github.token }}
+  annotations:
+    description: Mark each version that is too new or unknown on its lockfile line in the pull request's files view.
+    required: false
+    default: "true"
+  fail:
+    description: Set to false to report without failing the job when something is too new or unknown, to try unripe out first.
+    required: false
+    default: "true"
+  workflows:
+    description: Also check the actions this repository's workflows use, dated by their GitHub releases.
+    required: false
+    default: "false"
   python-version:
     description: The Python that runs unripe. uv downloads it when the runner does not have it.
     required: false
     default: "3.13"
+
+outputs:
+  result:
+    description: pass, fail or error
+    value: ${{ steps.unripe.outputs.result }}
+  unripe:
+    description: How many versions were too new
+    value: ${{ steps.unripe.outputs.unripe }}
+  unknown:
+    description: How many versions had an unknown age
+    value: ${{ steps.unripe.outputs.unknown }}
+  report:
+    description: The path of the markdown report
+    value: ${{ steps.unripe.outputs.report }}
+  json:
+    description: The path of the JSON report
+    value: ${{ steps.unripe.outputs.json }}
 
 runs:
   using: composite
@@ -64,6 +93,7 @@ runs:
         enable-cache: false
         ignore-empty-workdir: true
     - name: Run unripe
+      id: unripe
       shell: bash
       env:
         INPUT_MIN_AGE: ${{ inputs.min-age }}
@@ -76,6 +106,9 @@ runs:
         INPUT_SARIF: ${{ inputs.sarif }}
         INPUT_PYTHON: ${{ inputs.python-version }}
         INPUT_COMMENT: ${{ inputs.comment }}
+        INPUT_ANNOTATIONS: ${{ inputs.annotations }}
+        INPUT_FAIL: ${{ inputs.fail }}
+        INPUT_WORKFLOWS: ${{ inputs.workflows }}
         PR_BASE: ${{ github.event.pull_request.base.sha }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         GH_TOKEN: ${{ inputs.github-token }}

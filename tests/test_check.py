@@ -1,12 +1,14 @@
 import shutil
 import subprocess
-from datetime import timedelta
+from datetime import date, timedelta
 
 import pytest
 
 from conftest import NOW, TESTDATA
-from unripe.check import Problem, check
-from unripe.policy import Policy
+from unripe import lockfiles
+from unripe.check import Problem, check, instead, judge
+from unripe.model import Package
+from unripe.policy import Allow, Policy, Rule
 
 LEFTPAD = '''{
   "name": "app",
@@ -247,3 +249,149 @@ def test_line_points_at_the_locked_entry(lockfile, ecosystem, name, version, tex
     rows = (TESTDATA / lockfile).read_text("utf-8").splitlines()
     number = line([row.lower() for row in rows], Package(ecosystem, name, version))
     assert rows[number - 1] == text
+
+
+def lock(tmp_path, *packages):
+    """A package-lock.json with these name and version pairs."""
+    entries = ",\n".join(
+        f'    "node_modules/{name}": {{"version": "{version}", "resolved": "https://registry.npmjs.org/{name}/-/{name}-{version}.tgz"}}'
+        for name, version in packages
+    )
+    (tmp_path / "package-lock.json").write_text('{"lockfileVersion": 3, "packages": {"": {},\n' + entries + "\n}}")
+
+
+def test_min_age_for_changes_what_is_too_new(fake, lookups, tmp_path):
+    lock(tmp_path, ("react", "19.0.0"), ("@types/node", "22.0.0"))
+    fake.add("npm", "react", "19.0.0", timedelta(days=5))
+    fake.add("npm", "@types/node", "22.0.0", timedelta(hours=30))
+    result = run([tmp_path], lookups, min_age_for={"npm": timedelta(days=7), "npm:@types/*": timedelta(days=1)})
+    assert states(result) == {("react", "19.0.0"): "unripe", ("@types/node", "22.0.0"): "ok"}
+    react = result.findings[0]
+    assert react.minimum == timedelta(days=7) and react.ripe == NOW - timedelta(days=5) + timedelta(days=7)
+
+
+def test_allow_lets_a_version_through_until_it_ends(fake, lookups, tmp_path):
+    lock(tmp_path, ("axios", "1.13.2"), ("left-pad", "1.3.0"))
+    fake.add("npm", "axios", "1.13.2", timedelta(hours=5))
+    fake.add("npm", "left-pad", "1.3.0", timedelta(days=400))
+    current = [Allow(Rule.parse("npm:axios@1.13.2"), "fixes a CVE", date(2026, 10, 25))]
+    result = run([tmp_path], lookups, allow=current)
+    assert states(result)[("axios", "1.13.2")] == "allowed"
+    assert result.findings[0].reason == "allowed until 2026-10-25: fixes a CVE"
+    assert result.exitcode == 0 and result.notes == []
+
+    ended = [Allow(Rule.parse("npm:axios@1.13.2"), "", date(2026, 10, 1)), Allow(Rule.parse("left-pad")), Allow(Rule.parse("nothing-here"))]
+    result = run([tmp_path], lookups, allow=ended)
+    assert states(result)[("axios", "1.13.2")] == "unripe" and result.exitcode == 1
+    assert result.notes == [
+        "the allow entry for npm:axios@1.13.2 ended on 2026-10-01, so it no longer applies",
+        "the allow entry for left-pad is no longer needed: everything it covers is old enough now",
+        "the allow entry for nothing-here matches nothing in these lockfiles",
+    ]
+
+
+def advisory(ident, name, fixed):
+    return {"id": ident, "affected": [{"package": {"name": name, "ecosystem": "npm"}, "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": fixed}]}]}]}
+
+
+def test_security_fixes_are_allowed_when_asked(fake, lookups, tmp_path):
+    lock(tmp_path, ("axios", "1.13.2"), ("fresh", "2.0.0"), ("later", "1.0.1"))
+    for name, version in (("axios", "1.13.2"), ("fresh", "2.0.0"), ("later", "1.0.1")):
+        fake.add("npm", name, version, timedelta(hours=5))
+    # malware reports never count, and only the version an advisory names as the fix does
+    fake.advisories = [advisory("GHSA-aaaa-bbbb-cccc", "axios", "1.13.2"), advisory("MAL-2026-1", "fresh", "2.0.0"), advisory("GHSA-dddd-eeee-ffff", "later", "1.0.0")]
+    assert states(run([tmp_path], lookups))[("axios", "1.13.2")] == "unripe"
+    assert fake.posts == []
+    result = run([tmp_path], lookups, security_fixes=True)
+    assert states(result) == {("axios", "1.13.2"): "allowed", ("fresh", "2.0.0"): "unripe", ("later", "1.0.1"): "unripe"}
+    assert next(f for f in result.findings if f.state == "allowed").reason == "fixes GHSA-aaaa-bbbb-cccc"
+
+
+def test_suggests_the_newest_old_enough_version_in_the_same_line(fake, lookups, tmp_path):
+    lock(tmp_path, ("lib", "2.3.1"))
+    fake.add("npm", "lib", "2.3.1", timedelta(hours=5))
+    fake.add("npm", "lib", "2.3.0", timedelta(days=20))
+    fake.add("npm", "lib", "2.2.9", timedelta(days=40))
+    fake.add("npm", "lib", "2.4.0-beta.1", timedelta(days=10))  # a prerelease is never suggested for a release
+    fake.add("npm", "lib", "2.3.0-unpublished.0", timedelta(days=30))
+    fake.add("npm", "lib", "2.2.10", timedelta(days=30))  # unpublished below, so never suggested
+    fake.add("npm", "lib", "3.0.0", timedelta(days=9))  # another major
+    fake.add("npm", "lib", "1.9.9", timedelta(days=500))
+    fake.yanked.add(("npm", "lib", "2.3.0"))
+    result = run([tmp_path], lookups)
+    assert result.findings[0].instead == ("2.2.10", NOW - timedelta(days=30))
+    assert run([tmp_path], lookups, min_age=timedelta(days=60)).findings[0].instead is None
+    assert check([str(tmp_path)], Policy(), lookups, now=NOW, suggest=False).findings[0].instead is None
+
+
+@pytest.mark.parametrize(
+    "ecosystem, version, older, expected",
+    [
+        ("pypi", "2.32.4", ["2.32.3", "2.33.0rc1", "2.31.0"], "2.32.3"),
+        ("cargo", "0.4.2", ["0.4.1", "0.3.9"], "0.4.1"),  # under 1.0 the minor is the line
+        ("rubygems", "1.16.1-x86_64-linux", ["1.16.0", "1.16.0-x86_64-linux", "1.16.0-arm64-darwin"], "1.16.0-x86_64-linux"),
+        ("nuget", "8.0.1", ["8.0.1-preview.1", "8.0.0"], "8.0.0"),
+        ("composer", "3.5.1", ["3.5.0", "3.6.0-RC1"], "3.5.0"),
+        ("jsr", "1.0.14", ["1.0.13"], "1.0.13"),
+    ],
+)
+def test_suggestions_on_other_registries(fake, lookups, ecosystem, version, older, expected):
+    name = "@std/pkg" if ecosystem == "jsr" else "vendor/pkg" if ecosystem == "composer" else "pkg"
+    fake.add(ecosystem, name, version, timedelta(hours=1))
+    for index, other in enumerate(older):
+        fake.add(ecosystem, name, other, timedelta(days=10 + index))
+    finding = judge(Package(ecosystem, name, version), Policy(), lookups, NOW)
+    assert finding.state == "unripe"
+    assert instead(finding, lookups, NOW)[0] == expected
+
+
+def test_an_unpublished_npm_version_is_unknown(fake, tmp_path):
+    from unripe.registries import Cache, Registries
+
+    lock(tmp_path, ("event-stream", "3.3.6"))
+    fake.add("npm", "event-stream", "3.3.6", timedelta(days=400))
+    fake.yanked.add(("npm", "event-stream", "3.3.6"))
+    result = run([tmp_path], Registries(Cache(None)))
+    assert states(result) == {("event-stream", "3.3.6"): "unknown"}
+    assert "unpublished from the npm registry" in result.findings[0].reason
+    # checking as of a past moment, it was still up then, so its age decides
+    assert states(run([tmp_path], Registries(Cache(None), now=NOW))) == {("event-stream", "3.3.6"): "ok"}
+
+
+def test_deno_jsr_versions_are_dated_by_jsr(fake, lookups):
+    for package in lockfiles.read((TESTDATA / "deno/deno.lock").read_text(), "deno.lock"):
+        fake.add(package.ecosystem, package.name, package.version, timedelta(days=30))
+    fake.add("jsr", "@std/assert", "1.0.13", timedelta(hours=2))
+    result = run([TESTDATA / "deno"], lookups)
+    assert states(result)[("@std/assert", "1.0.13")] == "unripe" and result.count("ok") == 6
+
+
+def test_actions_are_dated_by_their_release(fake, lookups, tmp_path):
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    old, new, loose = "a" * 40, "b" * 40, "c" * 40
+    (workflows / "ci.yml").write_text(
+        "jobs:\n  a:\n    steps:\n"
+        f"      - uses: actions/checkout@{old}\n"
+        "      - uses: actions/checkout@v7\n"
+        "      - uses: actions/cache@main\n"
+        f"      - uses: someone/thing@{loose}\n"
+    )
+    fake.tags["actions/checkout"] = {"v7.0.1": new, "v7": new, "v6.0.0": old, "v6": old}
+    fake.tags["actions/cache"] = {"v4.0.0": "d" * 40}
+    fake.tags["someone/thing"] = {}
+    fake.releases[("actions/checkout", "v6.0.0")] = NOW - timedelta(days=90)
+    fake.releases[("actions/checkout", "v7.0.1")] = NOW - timedelta(hours=10)
+    fake.commits[("someone/thing", loose)] = NOW - timedelta(days=50)
+    assert run([tmp_path], lookups).lockfiles == []
+    result = run([tmp_path], lookups, workflows=True)
+    assert states(result) == {
+        ("actions/checkout", old): "ok",
+        ("actions/checkout", "v7"): "unripe",
+        ("actions/cache", "main"): "unknown",
+        ("someone/thing", loose): "ok",
+    }
+    assert "a branch or an unknown tag" in next(f.reason for f in result.findings if f.state == "unknown")
+    # a moving tag is looked up again on each run, never taken from the cache
+    assert lookups.cache.get(Package("actions", "actions/checkout", "v7")) is None
+    assert lookups.cache.get(Package("actions", "actions/checkout", old)) == NOW - timedelta(days=90)

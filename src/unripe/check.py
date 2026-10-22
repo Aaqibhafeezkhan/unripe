@@ -10,16 +10,19 @@ import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
 from unripe import lockfiles
 from unripe.model import REGISTRY, STATES, Finding, Package
 from unripe.policy import Policy
-from unripe.registries import Missing, Registries, Unreachable
+from unripe.registries import Missing, Registries, Said, Unreachable
 
 WORKERS = 16
+# a suggestion costs a request on some registries; past this many there is a bigger problem than which version to use
+SUGGEST = 200
+PRERELEASE = re.compile(r"(alpha|beta|rc|pre|dev|canary|next|nightly|snapshot|preview|insiders|experimental|\d[abc]\d)", re.IGNORECASE)
 
 
 class Problem(Exception):
@@ -34,6 +37,8 @@ class Result:
     unreadable: list[tuple[str, str]] = field(default_factory=list)
     since: str | None = None
     checked_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # things worth saying that are not findings, like an allow entry that expired
+    notes: list[str] = field(default_factory=list)
 
     def count(self, state: str) -> int:
         return sum(1 for finding in self.findings if finding.state == state)
@@ -128,18 +133,98 @@ def judge(
     rule = policy.excluded(package.ecosystem, package.name, package.version)
     if rule:
         return Finding(package, "excluded", reason=f"matches exclude {rule}", locations=where)
+    minimum = policy.age(package.ecosystem, package.name, package.version)
     registry = REGISTRY.get(package.ecosystem, package.ecosystem)
     try:
         published = registries.published(package)
+    except Said as error:
+        finding = Finding(package, "unknown", reason=str(error), locations=where, minimum=minimum)
     except Missing:
-        return Finding(package, "unknown", reason=f"not found on {registry}", locations=where)
+        finding = Finding(package, "unknown", reason=f"not found on {registry}", locations=where, minimum=minimum)
     except Unreachable as error:
-        return Finding(package, "unknown", reason=f"{registry} did not answer ({error})", locations=where)
+        finding = Finding(package, "unknown", reason=f"{registry} did not answer ({error})", locations=where, minimum=minimum)
     except Exception as error:  # a registry answering nonsense is an unknown, never an ok
-        return Finding(package, "unknown", reason=f"{registry} gave an answer unripe could not use ({error})", locations=where)
-    age = (now - published).total_seconds()
-    state = "ok" if age >= policy.min_age.total_seconds() else "unripe"
-    return Finding(package, state, published, age, locations=where)
+        finding = Finding(package, "unknown", reason=f"{registry} gave an answer unripe could not use ({error})", locations=where, minimum=minimum)
+    else:
+        age = (now - published).total_seconds()
+        state = "ok" if age >= minimum.total_seconds() else "unripe"
+        finding = Finding(package, state, published, age, locations=where, minimum=minimum)
+    if finding.state == "ok":
+        return finding
+
+    entry, _ = policy.allowed(package.ecosystem, package.name, package.version, now)
+    if entry:
+        return replace(finding, state="allowed", reason=entry.describe())
+    if finding.state == "unripe" and policy.security_fixes:
+        try:
+            advisories = registries.fixes(package)
+        except (Missing, Unreachable):
+            advisories = []
+        if advisories:
+            return replace(finding, state="allowed", reason=f"fixes {', '.join(advisories[:3])}")
+    return finding
+
+
+def numbers(version: str) -> tuple[int, ...]:
+    """The leading numbers of a version, for ordering: `v1.12.0-rc.1` is (1, 12, 0)."""
+    core = re.split(r"[-+]", version.removeprefix("v"), maxsplit=1)[0]
+    return tuple(int(part) for part in re.findall(r"\d+", core)[:4])
+
+
+def prerelease(ecosystem: str, version: str) -> bool:
+    if ecosystem == "rubygems":
+        # Gemfile.lock adds a platform after a dash: `1.16.0-x86_64-linux` is a release
+        return bool(re.search(r"[a-z]", version.split("-", 1)[0], re.IGNORECASE))
+    if ecosystem in ("npm", "cargo", "nuget", "go", "composer") and "-" in version.split("+", 1)[0]:
+        return True
+    return bool(PRERELEASE.search(version))
+
+
+def instead(finding: Finding, registries: Registries, now: datetime) -> tuple[str, datetime] | None:
+    """
+    For a version that is too new: the newest version in the same release line
+    (same major, or same minor under 1.0) that is old enough and was not
+    yanked, unpublished or deprecated. Only from registries that list every version.
+    """
+    package, minimum = finding.package, finding.minimum or timedelta(0)
+    try:
+        times = registries.versions(package.ecosystem, package.name)
+    except (Missing, Unreachable, KeyError, ValueError, TypeError, AttributeError):
+        return None
+    pulled = registries.pulled.get((package.ecosystem, package.name), set())
+    locked = numbers(package.version)
+    if not locked:
+        return None
+    line = locked[:2] if locked[0] == 0 else locked[:1]
+    platform = package.version.partition("-")[2] if package.ecosystem == "rubygems" else ""
+    loose = prerelease(package.ecosystem, package.version)
+    best = None
+    for version, published in times.items():
+        if version == package.version or version in pulled or published > now - minimum:
+            continue
+        if platform != (version.partition("-")[2] if package.ecosystem == "rubygems" else ""):
+            continue
+        if (not loose and prerelease(package.ecosystem, version)) or numbers(version)[: len(line)] != line:
+            continue
+        key = (numbers(version), published)
+        if best is None or key > best[0]:
+            best = (key, version, published)
+    return (best[1], best[2]) if best else None
+
+
+def notes(findings: list[Finding], policy: Policy, now: datetime, since: str | None) -> list[str]:
+    """What to say about allow entries: expired ones that still matter, and ones nothing needs any more."""
+    said = []
+    for entry in policy.allow:
+        matched = [f for f in findings if entry.rule.matches(f.package.ecosystem, f.package.name, f.package.version)]
+        if entry.expired(now):
+            if any(f.state in ("unripe", "unknown") for f in matched):
+                said.append(f"the allow entry for {entry.rule} ended on {entry.until.isoformat()}, so it no longer applies")
+        elif matched and all(f.state in ("ok", "excluded") for f in matched):
+            said.append(f"the allow entry for {entry.rule} is no longer needed: everything it covers is old enough now")
+        elif not matched and not since:
+            said.append(f"the allow entry for {entry.rule} matches nothing in these lockfiles")
+    return said
 
 
 def check(
@@ -149,6 +234,7 @@ def check(
     since: str | None = None,
     now: datetime | None = None,
     progress: Callable[[int, int], None] | None = None,
+    suggest: bool = True,
 ) -> Result:
     now = now or datetime.now(timezone.utc)
     result = Result(findings=[], policy=policy, since=since, checked_at=now)
@@ -158,7 +244,7 @@ def check(
     locked: dict[tuple[str, str, str], Package] = {}
     places: dict[tuple[str, str, str], list[str]] = {}
     texts: dict[str, str] = {}
-    for path in lockfiles.find(paths):
+    for path in lockfiles.find(paths, policy.workflows):
         shown = display(path)
         result.lockfiles.append(shown)
         try:
@@ -196,13 +282,19 @@ def check(
                 findings.append(future.result())
                 if progress:
                     progress(done, len(futures))
+            if suggest:
+                young = [index for index, finding in enumerate(findings) if finding.state == "unripe"][:SUGGEST]
+                answers = pool.map(lambda index: instead(findings[index], registries, now), young)
+                for index, answer in zip(young, answers):
+                    if answer:
+                        findings[index] = replace(findings[index], instead=answer)
     finally:
         registries.cache.save()
 
     # line numbers only matter for what gets reported, and finding them is slow on big lockfiles
     rows: dict[str, list[str]] = {}
     for index, finding in enumerate(findings):
-        if finding.state in ("unripe", "unknown"):
+        if finding.state in ("unripe", "unknown", "allowed"):
             spots = []
             for shown, _ in finding.locations:
                 if shown not in rows:
@@ -213,4 +305,5 @@ def check(
     order = {state: index for index, state in enumerate(STATES)}
     findings.sort(key=lambda f: (order.get(f.state, 9), f.package.ecosystem, f.package.name.lower(), f.package.version))
     result.findings = findings
+    result.notes = notes(findings, policy, now, since)
     return result

@@ -1,4 +1,4 @@
-"""uv.lock, poetry.lock, Pipfile.lock and pinned requirements files."""
+"""uv.lock, pylock.toml, poetry.lock, Pipfile.lock and pinned requirements files."""
 
 from __future__ import annotations
 
@@ -46,12 +46,39 @@ def uploaded(entry: dict) -> datetime | None:
     stamps = []
     for item in files:
         if isinstance(item, dict) and item.get("upload-time"):
-            try:
-                stamp = datetime.fromisoformat(str(item["upload-time"]).replace("Z", "+00:00"))
-            except ValueError:
-                continue
+            stamp = item["upload-time"]
+            # pylock.toml writes a toml datetime, uv.lock a string
+            if not isinstance(stamp, datetime):
+                try:
+                    stamp = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+                except ValueError:
+                    continue
             stamps.append(stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc))
     return min(stamps) if stamps else None
+
+
+def pylock(text: str, lockfile: str) -> list[Package]:
+    """
+    pylock.toml, the standard lockfile from PEP 751 (`pip lock`, `uv export
+    --format pylock.toml`). Like uv.lock it can carry each file's upload time.
+    """
+    data = tomllib.loads(text)
+    found = []
+    for entry in data.get("packages") or []:
+        if not isinstance(entry, dict) or not entry.get("name") or not entry.get("version"):
+            continue
+        # vcs, directory and archive packages are not from an index
+        if any(key in entry for key in ("vcs", "directory", "archive")):
+            continue
+        files = [entry.get("sdist")] + list(entry.get("wheels") or [])
+        urls = [str(item.get("url") or "") for item in files if isinstance(item, dict)]
+        index = str(entry.get("index") or "")
+        if index and not pypi({"url": index}):
+            continue
+        if not index and urls and not any(pypi({"url": url}) for url in urls):
+            continue
+        found.append(Package("pypi", normal(entry["name"]), str(entry["version"]), lockfile, uploaded(entry)))
+    return found
 
 
 def poetry(text: str, lockfile: str) -> list[Package]:

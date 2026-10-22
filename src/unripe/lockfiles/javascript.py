@@ -1,5 +1,5 @@
 """
-npm, pnpm, yarn and bun lockfiles.
+npm, pnpm, yarn, bun and deno lockfiles.
 
 Everything here is parsed without a YAML library: pnpm and yarn lockfiles are
 regular enough to read line by line, and keeping unripe free of dependencies
@@ -247,3 +247,31 @@ def bun(text: str, lockfile: str) -> list[Package]:
 def bunbinary(text: str, lockfile: str) -> list[Package]:
     """bun.lockb, bun's old binary lockfile, which unripe does not read."""
     raise ValueError("bun.lockb is binary. bun 1.2 and later write a text bun.lock; run `bun install --save-text-lockfile` to make one")
+
+
+def deno(text: str, lockfile: str) -> list[Package]:
+    """
+    deno.lock, versions 3 to 5: npm packages under "npm" and JSR packages
+    under "jsr", keyed `name@version`. Remote URL imports are not packages.
+    """
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("not a deno lockfile")
+    # version 3 kept both tables under "packages"
+    tables = data.get("packages") if isinstance(data.get("packages"), dict) else data
+    found = []
+    for key, entry in (tables.get("npm") or {}).items():
+        # peer dependencies follow an underscore: `preact-render-to-string@6.5.11_preact@10.24.3`
+        name, version = split(key.split("_", 1)[0] if "@" in key.split("_", 1)[0][1:] else key)
+        tarball = entry.get("tarball") if isinstance(entry, dict) else None
+        # deno only writes a tarball for packages from a registry other than npm's
+        if tarball and "registry.npmjs.org" not in str(tarball):
+            continue
+        made = package(name, version, lockfile)
+        if made:
+            found.append(made)
+    for key in tables.get("jsr") or {}:
+        name, version = split(key)
+        if name.startswith("@") and "/" in name and version:
+            found.append(Package("jsr", name, version, lockfile))
+    return found

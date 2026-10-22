@@ -1,10 +1,11 @@
 # unripe for GitLab CI. Add it to your .gitlab-ci.yml with:
 #
 #   include:
-#     - remote: https://raw.githubusercontent.com/TexWoW/unripe/v0.4.0/ci/gitlab.yml
+#     - remote: https://raw.githubusercontent.com/TexWoW/unripe/v0.5.0/ci/gitlab.yml
 #
 # On merge requests it checks only the versions the merge request adds. On the
-# default branch it checks everything. Override the variables below in your own
+# default branch it checks everything. Findings show in the merge request's
+# code quality widget and test report. Override the variables below in your own
 # .gitlab-ci.yml to change the policy, for example UNRIPE_MIN_AGE: "7d".
 
 unripe:
@@ -12,7 +13,7 @@ unripe:
   # the full image, not -slim: --since needs git
   image: python:3.13
   variables:
-    UNRIPE_VERSION: "0.4.0"
+    UNRIPE_VERSION: "0.5.0"
     UNRIPE_MIN_AGE: "3d"
     # anything else to pass, like "--exclude npm:@myorg/* --unknown warn"
     UNRIPE_ARGS: ""
@@ -23,6 +24,7 @@ unripe:
     - pip install --quiet --no-cache-dir "unripe==${UNRIPE_VERSION}"
     - |
       set -- --min-age "$UNRIPE_MIN_AGE" --summary unripe-report.md
+      set -- "$@" --report codequality:gl-code-quality-report.json --report junit:unripe-junit.xml
       if [ -n "${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" ]; then
         # gitlab clones shallowly; fetch the base when it is missing
         if ! git cat-file -e "${CI_MERGE_REQUEST_DIFF_BASE_SHA}^{commit}" 2> /dev/null; then
@@ -38,4 +40,8 @@ unripe:
     when: always
     paths:
       - unripe-report.md
+    # findings show in the merge request's code quality widget and test summary
+    reports:
+      codequality: gl-code-quality-report.json
+      junit: unripe-junit.xml
     expire_in: 30 days

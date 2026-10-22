@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,8 +45,23 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./
+        id: unripe
         with:
-          paths: tests/testdata/live
+          paths: |
+            tests/testdata/live
+            .github
+            action.yml
           since: none
           sarif: unripe.sarif
           comment: true
+          workflows: true
+      - name: Check the action's outputs
+        shell: bash
+        env:
+          RESULT: ${{ steps.unripe.outputs.result }}
+          TOO_NEW: ${{ steps.unripe.outputs.unripe }}
+          REPORT: ${{ steps.unripe.outputs.json }}
+        run: |
+          test "$RESULT" = pass
+          test "$TOO_NEW" = 0
+          test -s "$REPORT"

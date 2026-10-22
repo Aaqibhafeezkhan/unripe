@@ -45,6 +45,15 @@ class FakeRegistry:
         self.nupkgs: dict[tuple[str, str], datetime] = {}
         # which repository holds a maven artifact, when it isn't maven central
         self.mavenrepo: dict[str, str] = {}
+        # versions yanked, unpublished or deprecated, as (ecosystem, name, version)
+        self.yanked: set[tuple[str, str, str]] = set()
+        # github: a repository's tags and the commit each points at, releases by tag, and commit times
+        self.tags: dict[str, dict[str, str]] = {}
+        self.releases: dict[tuple[str, str], datetime] = {}
+        self.commits: dict[tuple[str, str], datetime] = {}
+        # osv.dev advisories, in OSV's own shape
+        self.advisories: list[dict] = []
+        self.posts: list[dict] = []
 
     def add(self, ecosystem: str, name: str, version: str, age: timedelta | None = None, at: datetime | None = None, seen: timedelta | None = None) -> datetime:
         """A version published `age` ago. For go, `seen` is how long ago the checksum database first saw it (default: then too)."""
@@ -114,6 +123,18 @@ class FakeRegistry:
             raise Missing(url)
         return "\n".join([str(number), f"{module} {version} h1:AAAA=", f"{module} {version}/go.mod h1:AAAA=", "", "go.sum database tree", ""])
 
+    def post(self, url: str, payload: dict) -> dict:
+        """osv.dev's query endpoint."""
+        assert url == "https://api.osv.dev/v1/query"
+        self.posts.append(payload)
+        wanted = payload["package"]
+        hits = [
+            vuln
+            for vuln in self.advisories
+            if any(a["package"]["name"] == wanted["name"] and a["package"]["ecosystem"] == wanted["ecosystem"] for a in vuln.get("affected", []))
+        ]
+        return {"vulns": hits} if hits else {}
+
     def answer(self, url: str):
         parsed = urllib.parse.urlsplit(url)
         path = urllib.parse.unquote(parsed.path)
@@ -121,7 +142,49 @@ class FakeRegistry:
             name = path.lstrip("/")
             times = {"created": "2010-01-01T00:00:00.000Z", "modified": iso(NOW)}
             times.update({version: iso(moment) for version, moment in self.versions("npm", name).items()})
-            return {"name": name, "time": times}
+            # unpublished versions stay in the time document and leave the version list
+            listed = {version: {"version": version} for version in self.versions("npm", name) if ("npm", name, version) not in self.yanked}
+            return {"name": name, "time": times, "versions": listed}
+        if parsed.netloc == "jsr.io":
+            name = re.fullmatch(r"/(@[^/]+/[^/]+)/meta\.json", path).group(1)
+            versions = {}
+            for version, moment in self.versions("jsr", name).items():
+                # like jsr.io, versions from before mid 2025 have no time here, only in the API
+                versions[version] = {"createdAt": moment.strftime("%Y-%m-%dT%H:%M:%S.%fZ")} if moment.year >= 2025 else {}
+                if ("jsr", name, version) in self.yanked:
+                    versions[version]["yanked"] = True
+            return {"scope": name[1:].split("/")[0], "name": name.split("/")[1], "versions": versions}
+        if parsed.netloc == "api.jsr.io":
+            scope, name, version = re.fullmatch(r"/scopes/([^/]+)/packages/([^/]+)/versions/([^/]+)", path).groups()
+            moment = self.versions("jsr", f"@{scope}/{name}").get(version)
+            if moment is None:
+                raise Missing(url)
+            return {"scope": scope, "package": name, "version": version, "createdAt": moment.strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
+        if parsed.netloc == "api.github.com":
+            match = re.fullmatch(r"/repos/([^/]+/[^/]+)/(tags|releases/tags/(.+)|commits/(.+))", path)
+            repository = match.group(1)
+            if match.group(2) == "tags":
+                if repository not in self.tags:
+                    raise Missing(url)
+                page = int(urllib.parse.parse_qs(parsed.query).get("page", ["1"])[0])
+                listed = [{"name": tag, "commit": {"sha": sha}} for tag, sha in self.tags[repository].items()]
+                return listed[(page - 1) * 100 : page * 100]
+            if match.group(3):
+                moment = self.releases.get((repository, match.group(3)))
+                if moment is None:
+                    raise Missing(url)
+                return {"tag_name": match.group(3), "published_at": moment.strftime("%Y-%m-%dT%H:%M:%SZ")}
+            moment = self.commits.get((repository, match.group(4)))
+            if moment is None:
+                raise Missing(url)
+            return {"sha": match.group(4), "commit": {"committer": {"date": moment.strftime("%Y-%m-%dT%H:%M:%SZ")}}}
+        if parsed.netloc == "pypi.org" and re.fullmatch(r"/pypi/[^/]+/json", path):
+            name = path.split("/")[2]
+            releases = {}
+            for version, moment in self.versions("pypi", name).items():
+                yanked = ("pypi", name, version) in self.yanked
+                releases[version] = [{"filename": "x.tar.gz", "upload_time_iso_8601": iso(moment), "yanked": yanked}]
+            return {"info": {"name": name}, "releases": releases}
         if parsed.netloc == "pypi.org":
             match = re.fullmatch(r"/pypi/([^/]+)/([^/]+)/json", path)
             moment = self.versions("pypi", match.group(1)).get(match.group(2))
@@ -142,6 +205,14 @@ class FakeRegistry:
             if moment is None:
                 raise Missing(url)
             return {"Version": unescape(match.group(2)), "Time": moment.strftime("%Y-%m-%dT%H:%M:%SZ")}
+        if parsed.netloc == "api.nuget.org" and path.endswith("/index.json"):
+            name = path.split("/")[-2]
+            leaves = []
+            for version, moment in self.versions("nuget", name).items():
+                hidden = (name, version) in self.unlisted
+                published = "1900-01-01T00:00:00+00:00" if hidden else moment.isoformat()
+                leaves.append({"catalogEntry": {"id": name, "version": version, "published": published, "listed": not hidden}})
+            return {"count": 1, "items": [{"count": len(leaves), "items": leaves}]}
         if parsed.netloc == "api.nuget.org":
             leaf = re.fullmatch(r"/v3/registration5-gz-semver2/([^/]+)/([^/]+)\.json", path)
             if leaf:
@@ -192,7 +263,8 @@ class FakeRegistry:
         assert url == f"https://index.crates.io/{registries.crateindex(name)}"
         lines = []
         for version, moment in self.versions("cargo", name).items():
-            lines.append(json.dumps({"name": name, "vers": version, "deps": [], "cksum": "00", "features": {}, "yanked": False, "pubtime": moment.strftime("%Y-%m-%dT%H:%M:%SZ")}))
+            yanked = ("cargo", name, version) in self.yanked
+            lines.append(json.dumps({"name": name, "vers": version, "deps": [], "cksum": "00", "features": {}, "yanked": yanked, "pubtime": moment.strftime("%Y-%m-%dT%H:%M:%SZ")}))
         return "\n".join(lines) + "\n"
 
 
@@ -201,6 +273,10 @@ def fake(monkeypatch) -> FakeRegistry:
     registry = FakeRegistry()
     monkeypatch.setattr(registries, "fetchtext", registry.fetchtext)
     monkeypatch.setattr(registries, "fetchmodified", registry.modified)
+    monkeypatch.setattr(registries, "post", registry.post)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("UNRIPE_CONFIG", raising=False)
     monkeypatch.delenv("UNRIPE_MAVEN_REPOS", raising=False)
     for name in ("GOPROXY", "GOSUMDB", "GONOSUMDB", "GOPRIVATE"):
         monkeypatch.delenv(name, raising=False)

@@ -36,8 +36,10 @@ This is the most useful contribution right now. The pieces are:
    Register the filename in `PARSERS` in `src/unripe/lockfiles/__init__.py`.
 2. A lookup in `src/unripe/registries.py`, a method on `Registries` that
    returns when a version was published, added to `self.lookups`. If one
-   request answers for every version of a package, use `self.every()` so it
-   is fetched once.
+   request answers for every version of a package, write a method that
+   returns every version's time, add it to `self.listings`, and have the
+   lookup call `self.every(package)` so it is fetched once. Being in
+   `self.listings` also lets unripe suggest an older version that passes.
 3. The ecosystem's name in `ECOSYSTEMS` and `REGISTRY` in `src/unripe/model.py`.
 4. A real lockfile in `tests/testdata/<name>/` with the awkward cases in it,
    tests in `tests/test_lockfiles.py`, and the registry's answer shape in

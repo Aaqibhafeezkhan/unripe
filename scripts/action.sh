@@ -24,6 +24,15 @@ fi
 if [ -n "$(trim "${INPUT_CONFIG:-}")" ]; then
   args+=(--config "$(trim "$INPUT_CONFIG")")
 fi
+if [ "$(trim "${INPUT_ANNOTATIONS:-true}")" = "true" ]; then
+  args+=(--annotate)
+fi
+if [ "$(trim "${INPUT_FAIL:-true}")" = "false" ]; then
+  args+=(--exit-zero)
+fi
+if [ "$(trim "${INPUT_WORKFLOWS:-false}")" = "true" ]; then
+  args+=(--workflows)
+fi
 
 since="$(trim "${INPUT_SINCE:-}")"
 if [ -z "$since" ]; then
@@ -47,8 +56,9 @@ done <<< "${INPUT_EXCLUDE:-}"
 
 # the markdown report goes to a file first: it feeds the job summary and the pull request comment
 report="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/unripe-report.md"
-rm -f "$report"
-args+=(--summary "$report")
+json="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/unripe-report.json"
+rm -f "$report" "$json"
+args+=(--summary "$report" --json "$json")
 if [ -n "$(trim "${INPUT_SARIF:-}")" ]; then
   args+=(--sarif "$(trim "$INPUT_SARIF")")
 fi
@@ -62,7 +72,27 @@ fi
 export PYTHONPATH="$GITHUB_ACTION_PATH/src"
 export UNRIPE_CACHE="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/unripe-cache"
 status=0
-uv run --no-project --python "$(trim "${INPUT_PYTHON:-3.13}")" python -m unripe "${args[@]}" || status=$?
+python="$(trim "${INPUT_PYTHON:-3.13}")"
+uv run --no-project --python "$python" python -m unripe "${args[@]}" || status=$?
+
+# step outputs, read from the JSON report so other steps can act on the result
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  {
+    echo "report=$report"
+    echo "json=$json"
+    if [ -f "$json" ]; then
+      uv run --no-project --python "$python" python -c '
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+print("result=" + data["result"])
+print("unripe=%d" % data["summary"]["unripe"])
+print("unknown=%d" % data["summary"]["unknown"])
+' "$json" || true
+    else
+      echo "result=error"
+    fi
+  } >> "$GITHUB_OUTPUT"
+fi
 
 if [ -f "$report" ] && [ "$(trim "${INPUT_SUMMARY:-true}")" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   cat "$report" >> "$GITHUB_STEP_SUMMARY"

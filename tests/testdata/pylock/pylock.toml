@@ -1,0 +1,49 @@
+lock-version = "1.0"
+environments = ["sys_platform == 'linux'"]
+requires-python = ">=3.11"
+created-by = "pip"
+
+[[packages]]
+name = "Attrs"
+version = "25.1.0"
+index = "https://pypi.org/simple"
+
+[[packages.wheels]]
+name = "attrs-25.1.0-py3-none-any.whl"
+upload-time = 2025-01-25T11:30:10Z
+url = "https://files.pythonhosted.org/packages/attrs-25.1.0-py3-none-any.whl"
+size = 63152
+hashes = {sha256 = "c75a69e28a550a7e93789579c22aa26b0f5b83b75dc4e08fe092980051e1090a"}
+
+[packages.sdist]
+name = "attrs-25.1.0.tar.gz"
+upload-time = 2025-01-25T11:30:12Z
+url = "https://files.pythonhosted.org/packages/attrs-25.1.0.tar.gz"
+size = 810562
+hashes = {sha256 = "1c97078a80c814273a76b2a298a932eb681c87415c11dee0a6921de7f1b02c3e"}
+
+[[packages]]
+name = "idna"
+version = "3.10"
+
+[[packages.wheels]]
+url = "https://files.pythonhosted.org/packages/idna-3.10-py3-none-any.whl"
+hashes = {sha256 = "946d195a0d259cbba61165e88e65941f16e9b36ea6ddb97f00452bae8b1287d3"}
+
+[[packages]]
+name = "internal-tool"
+version = "1.0.0"
+index = "https://pypi.mycorp.example/simple"
+
+[[packages.wheels]]
+url = "https://pypi.mycorp.example/files/internal_tool-1.0.0-py3-none-any.whl"
+hashes = {sha256 = "00"}
+
+[[packages]]
+name = "from-git"
+version = "0.1.0"
+vcs = {type = "git", url = "https://github.com/example/from-git", commit-id = "0123456789abcdef0123456789abcdef01234567"}
+
+[[packages]]
+name = "local-thing"
+directory = {path = "./local"}

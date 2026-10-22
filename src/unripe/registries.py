@@ -17,6 +17,7 @@ import json
 import os
 import random
 import re
+import ssl
 import threading
 import time
 import urllib.error
@@ -32,10 +33,17 @@ from unripe.model import Package
 AGENT = f"unripe/{__version__} (+https://github.com/TexWoW/unripe)"
 TIMEOUT = 20
 TRIES = 4
+# how many requests this process has made, for --verbose
+REQUESTS = [0]
+COUNTING = threading.Lock()
 
 
 class Missing(Exception):
     """The registry answered, and the version is not there."""
+
+
+class Said(Missing):
+    """Missing for a reason worth reporting as it is: an action used at a branch, an unpublished version."""
 
 
 class Unreachable(Exception):
@@ -48,7 +56,16 @@ def when(text: str) -> datetime:
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
 
 
-def ask(url: str, accept: str = "*/*", method: str = "GET") -> tuple[dict[str, str], bytes]:
+def tls() -> ssl.SSLContext | None:
+    """
+    A context for a corporate CA bundle, when one is set the way other tools
+    set it. SSL_CERT_FILE needs nothing: Python reads it already.
+    """
+    bundle = os.environ.get("UNRIPE_CA_BUNDLE") or os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("CURL_CA_BUNDLE")
+    return ssl.create_default_context(cafile=bundle) if bundle else None
+
+
+def ask(url: str, accept: str = "*/*", method: str = "GET", body: bytes | None = None) -> tuple[dict[str, str], bytes]:
     """
     One request, retrying the failures worth retrying, as the response headers
     (lower cased names) and body, gzip undone. A 404 is an answer, not a failure.
@@ -57,9 +74,19 @@ def ask(url: str, accept: str = "*/*", method: str = "GET") -> tuple[dict[str, s
     last = ""
     for attempt in range(TRIES):
         headers = {"User-Agent": AGENT, "Accept": accept, "Accept-Encoding": "gzip"}
-        request = urllib.request.Request(url, headers=headers, method=method)
+        # a token only ever goes to GitHub's own API, and only when one is set
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if token and url.startswith("https://api.github.com/"):
+            headers["Authorization"] = f"Bearer {token}"
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(url, data=body, headers=headers, method=method)
+        with COUNTING:
+            REQUESTS[0] += 1
         try:
-            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+            context = tls()
+            opened = urllib.request.urlopen(request, timeout=TIMEOUT, context=context) if context else urllib.request.urlopen(request, timeout=TIMEOUT)
+            with opened as response:
                 found = {name.lower(): value for name, value in response.headers.items()}
                 body = response.read()
                 if found.get("content-encoding") == "gzip" and body:
@@ -69,12 +96,15 @@ def ask(url: str, accept: str = "*/*", method: str = "GET") -> tuple[dict[str, s
             if error.code in (404, 410):
                 raise Missing(url) from error
             last = f"HTTP {error.code}"
+            if error.code == 403 and error.headers.get("X-RateLimit-Remaining") == "0":
+                last = "HTTP 403, rate limited (set GITHUB_TOKEN for a higher limit)"
+                break
             if error.code not in (429, 500, 502, 503, 504):
                 break
             retry = error.headers.get("Retry-After")
             if retry and retry.isdigit():
                 delay = max(delay, min(float(retry), 60.0))
-        except (urllib.error.URLError, TimeoutError, OSError, EOFError, gzip.BadGzipFile) as error:
+        except (urllib.error.URLError, TimeoutError, OSError, EOFError, gzip.BadGzipFile, ssl.SSLError) as error:
             last = str(getattr(error, "reason", error))
         if attempt < TRIES - 1:
             time.sleep(delay + random.random() * 0.5)
@@ -104,6 +134,31 @@ def fetch(url: str) -> dict | list:
         return json.loads(text)
     except ValueError as error:
         raise Unreachable(f"{url}: answered with something that is not JSON") from error
+
+
+def post(url: str, payload: dict) -> dict:
+    """POST some JSON and read JSON back."""
+    _, body = ask(url, "application/json", "POST", json.dumps(payload).encode("utf-8"))
+    try:
+        answer = json.loads(body.decode("utf-8-sig", errors="replace"))
+    except ValueError as error:
+        raise Unreachable(f"{url}: answered with something that is not JSON") from error
+    if not isinstance(answer, dict):
+        raise Unreachable(f"{url}: answered with something unripe does not know")
+    return answer
+
+
+# what OSV calls each ecosystem
+OSV = {
+    "npm": "npm",
+    "pypi": "PyPI",
+    "cargo": "crates.io",
+    "go": "Go",
+    "composer": "Packagist",
+    "rubygems": "RubyGems",
+    "nuget": "NuGet",
+    "maven": "Maven",
+}
 
 
 class Cache:
@@ -311,6 +366,14 @@ class SumDB:
         return older[0], newer[0], older[0] + width * fraction
 
 
+SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def specific(tag: str) -> tuple[int, int]:
+    """How exact a tag is, so `v4.2.0` is preferred over `v4` when both point at one commit."""
+    return tag.count("."), len(tag)
+
+
 CENTRAL = "https://repo1.maven.org/maven2"
 GOOGLE = "https://dl.google.com/dl/android/maven2"
 PLUGINS = "https://plugins.gradle.org/m2"
@@ -355,10 +418,15 @@ class Registries:
         pypiurl: str | None = None,
         now: datetime | None = None,
         mavenrepos: list[str] | tuple[str, ...] = (),
+        offline: bool = False,
     ):
         self.cache = cache
+        # answer only from the cache: anything not in it is unknown
+        self.offline = offline
         self.mavenextra = list(mavenrepos)
         self.sumdb = SumDB(now or datetime.now(timezone.utc), cache)
+        # checking as of a past moment (--as-of): what was taken down since then was still up then
+        self.replaying = now is not None and now < datetime.now(timezone.utc) - timedelta(hours=1)
         self.npmurl = (npmurl or os.environ.get("UNRIPE_NPM_REGISTRY") or "https://registry.npmjs.org").rstrip("/")
         self.pypiurl = (pypiurl or os.environ.get("UNRIPE_PYPI_URL") or "https://pypi.org").rstrip("/")
         self.lookups: dict[str, Callable[[Package], datetime]] = {
@@ -370,16 +438,42 @@ class Registries:
             "rubygems": self.rubygems,
             "nuget": self.nuget,
             "maven": self.maven,
+            "jsr": self.jsr,
+            "actions": self.actions,
         }
         # registries whose one answer covers every version are asked once per package
         self.pending: dict[str, threading.Lock] = {}
         self.guard = threading.Lock()
+        # every version of a package and its publish time, for the ones fetched whole
+        self.documents: dict[tuple[str, str], dict[str, datetime]] = {}
+        # versions that were yanked or unlisted, never suggested
+        self.pulled: dict[tuple[str, str], set[str]] = {}
+        # npm versions that were unpublished: the registry keeps their time but not the version
+        self.gone: set[tuple[str, str]] = set()
+        # jsr versions listed without a time
+        self.undated: set[tuple[str, str]] = set()
+        self.listings: dict[str, Callable[[str], dict[str, datetime]]] = {
+            "npm": self.npmall,
+            "pypi": self.pypiall,
+            "cargo": self.cargoall,
+            "composer": self.composerall,
+            "rubygems": self.rubygemsall,
+            "nuget": self.nugetall,
+            "jsr": self.jsrall,
+        }
 
     def published(self, package: Package) -> datetime:
         if package.published:
             return package.published
+        if package.ecosystem == "actions" and not SHA.match(package.version):
+            # a tag like v4 moves to newer commits, so what it points at is looked up every run
+            if self.offline:
+                raise Unreachable("not in the cache, and --offline is set")
+            return self.actions(package)
         stamp = self.cache.get(package)
         if stamp is None:
+            if self.offline:
+                raise Unreachable("not in the cache, and --offline is set")
             lookup = self.lookups.get(package.ecosystem)
             if lookup is None:
                 raise Missing(f"unripe has no registry for {package.ecosystem}")
@@ -391,36 +485,66 @@ class Registries:
         with self.guard:
             return self.pending.setdefault(key, threading.Lock())
 
-    def every(self, package: Package, fetchall: Callable[[], dict[str, datetime]]) -> datetime:
+    def versions(self, ecosystem: str, name: str) -> dict[str, datetime]:
+        """Every version of a package with its publish time, fetched once per run. Not every registry can say."""
+        listing = self.listings.get(ecosystem)
+        if listing is None or self.offline:
+            raise Missing(f"unripe cannot list every version on {ecosystem}")
+        with self.once(f"{ecosystem}:{name}"):
+            if (ecosystem, name) not in self.documents:
+                self.documents[(ecosystem, name)] = listing(name)
+            return self.documents[(ecosystem, name)]
+
+    def every(self, package: Package, fetchall: Callable[[], dict[str, datetime]] | None = None) -> datetime:
         """
         For a registry whose one answer covers every version of a package: fetch
         it once, cache every version's time, then answer for the version asked about.
+        The answer comes from the ecosystem's entry in `self.listings`, or from `fetchall`.
         """
         with self.once(f"{package.ecosystem}:{package.name}"):
             cached = self.cache.get(package)
             if cached:
                 return cached
-            times = fetchall()
-            for version, stamp in times.items():
-                self.cache.learn(package.ecosystem, package.name, version, stamp)
+            key = (package.ecosystem, package.name)
+            if key not in self.documents:
+                self.documents[key] = fetchall() if fetchall else self.listings[package.ecosystem](package.name)
+                for version, stamp in self.documents[key].items():
+                    self.cache.learn(package.ecosystem, package.name, version, stamp)
+            times = self.documents[key]
             if package.version not in times:
                 raise Missing(f"{package} is not in the registry")
             return times[package.version]
 
-    def npm(self, package: Package) -> datetime:
-        def fetchall() -> dict[str, datetime]:
-            data = fetch(f"{self.npmurl}/{urllib.parse.quote(package.name, safe='@')}")
-            times = {}
-            for version, stamp in ((data.get("time") if isinstance(data, dict) else None) or {}).items():
-                if version in ("created", "modified"):
-                    continue
-                try:
-                    times[version] = when(stamp)
-                except (TypeError, ValueError, AttributeError):
-                    continue
-            return times
+    def pull(self, ecosystem: str, name: str, version: str) -> None:
+        self.pulled.setdefault((ecosystem, name), set()).add(version)
 
-        return self.every(package, fetchall)
+    def npm(self, package: Package) -> datetime:
+        stamp = self.every(package)
+        if (package.name, package.version) in self.gone and not self.replaying:
+            # npm takes malicious versions down this way, so a lockfile that still has one should hear about it
+            raise Said("unpublished from the npm registry, which is how npm takes down malicious versions")
+        return stamp
+
+    def npmall(self, name: str) -> dict[str, datetime]:
+        data = fetch(f"{self.npmurl}/{urllib.parse.quote(name, safe='@')}")
+        times = {}
+        for version, stamp in ((data.get("time") if isinstance(data, dict) else None) or {}).items():
+            if version in ("created", "modified"):
+                continue
+            try:
+                times[version] = when(stamp)
+            except (TypeError, ValueError, AttributeError):
+                continue
+        # the time document keeps versions that were unpublished; only those still listed can be suggested
+        listed = data.get("versions") if isinstance(data, dict) else None
+        if isinstance(listed, dict):
+            for version in times:
+                if version not in listed:
+                    self.gone.add((name, version))
+                    self.pull("npm", name, version)
+                elif isinstance(listed[version], dict) and listed[version].get("deprecated"):
+                    self.pull("npm", name, version)
+        return times
 
     def pypi(self, package: Package) -> datetime:
         name, version = urllib.parse.quote(package.name), urllib.parse.quote(package.version)
@@ -432,21 +556,35 @@ class Registries:
         # the first file uploaded is when the version became installable
         return min(stamps)
 
-    def cargo(self, package: Package) -> datetime:
-        def fetchall() -> dict[str, datetime]:
-            # the sparse index is a CDN that carries every version's publish time,
-            # and is what crates.io asks tools to use instead of its rate limited API
-            body = fetchtext(f"https://index.crates.io/{crateindex(package.name)}")
-            times = {}
-            for line in body.splitlines():
-                try:
-                    entry = json.loads(line)
-                    times[str(entry["vers"])] = when(entry["pubtime"])
-                except (ValueError, KeyError, TypeError, AttributeError):
-                    continue
-            return times
+    def pypiall(self, name: str) -> dict[str, datetime]:
+        data = fetch(f"{self.pypiurl}/pypi/{urllib.parse.quote(name)}/json")
+        times = {}
+        for version, files in ((data.get("releases") if isinstance(data, dict) else None) or {}).items():
+            stamps = [when(f["upload_time_iso_8601"]) for f in files or [] if isinstance(f, dict) and f.get("upload_time_iso_8601")]
+            if not stamps:
+                continue
+            times[version] = min(stamps)
+            if all(f.get("yanked") for f in files if isinstance(f, dict)):
+                self.pull("pypi", name, version)
+        return times
 
-        return self.every(package, fetchall)
+    def cargo(self, package: Package) -> datetime:
+        return self.every(package)
+
+    def cargoall(self, name: str) -> dict[str, datetime]:
+        # the sparse index is a CDN that carries every version's publish time,
+        # and is what crates.io asks tools to use instead of its rate limited API
+        body = fetchtext(f"https://index.crates.io/{crateindex(name)}")
+        times = {}
+        for line in body.splitlines():
+            try:
+                entry = json.loads(line)
+                times[str(entry["vers"])] = when(entry["pubtime"])
+            except (ValueError, KeyError, TypeError, AttributeError):
+                continue
+            if entry.get("yanked"):
+                self.pull("cargo", name, str(entry["vers"]))
+        return times
 
     def go(self, package: Package) -> datetime:
         data = fetch(f"{goproxy()}/{goescape(package.name)}/@v/{goescape(package.version)}.info")
@@ -471,40 +609,42 @@ class Registries:
         return committed if committed >= earliest else guess
 
     def composer(self, package: Package) -> datetime:
-        def fetchall() -> dict[str, datetime]:
-            data = fetch(f"https://repo.packagist.org/p2/{package.name}.json")
-            versions = ((data.get("packages") if isinstance(data, dict) else None) or {}).get(package.name) or []
-            times = {}
-            # p2 files are minified: each entry lists only what changed since the one before
-            current: dict = {}
-            for entry in versions:
-                for key, value in entry.items():
-                    if value == "__unset":
-                        current.pop(key, None)
-                    else:
-                        current[key] = value
-                if current.get("version") and current.get("time"):
-                    try:
-                        times[str(current["version"]).lstrip("v")] = when(str(current["time"]))
-                    except ValueError:
-                        continue
-            return times
+        return self.every(package)
 
-        return self.every(package, fetchall)
+    def composerall(self, name: str) -> dict[str, datetime]:
+        data = fetch(f"https://repo.packagist.org/p2/{name}.json")
+        versions = ((data.get("packages") if isinstance(data, dict) else None) or {}).get(name) or []
+        times = {}
+        # p2 files are minified: each entry lists only what changed since the one before
+        current: dict = {}
+        for entry in versions:
+            for key, value in entry.items():
+                if value == "__unset":
+                    current.pop(key, None)
+                else:
+                    current[key] = value
+            if current.get("version") and current.get("time"):
+                try:
+                    times[str(current["version"]).lstrip("v")] = when(str(current["time"]))
+                except ValueError:
+                    continue
+                if current.get("abandoned"):
+                    self.pull("composer", name, str(current["version"]).lstrip("v"))
+        return times
 
     def rubygems(self, package: Package) -> datetime:
-        def fetchall() -> dict[str, datetime]:
-            data = fetch(f"https://rubygems.org/api/v1/versions/{urllib.parse.quote(package.name)}.json")
-            times = {}
-            for entry in data if isinstance(data, list) else []:
-                number, platform = entry.get("number"), entry.get("platform") or "ruby"
-                if not number or not entry.get("created_at"):
-                    continue
-                # Gemfile.lock writes platform gems as `1.2.3-x86_64-linux`
-                times[number if platform == "ruby" else f"{number}-{platform}"] = when(entry["created_at"])
-            return times
+        return self.every(package)
 
-        return self.every(package, fetchall)
+    def rubygemsall(self, name: str) -> dict[str, datetime]:
+        data = fetch(f"https://rubygems.org/api/v1/versions/{urllib.parse.quote(name)}.json")
+        times = {}
+        for entry in data if isinstance(data, list) else []:
+            number, platform = entry.get("number"), entry.get("platform") or "ruby"
+            if not number or not entry.get("created_at"):
+                continue
+            # Gemfile.lock writes platform gems as `1.2.3-x86_64-linux`
+            times[number if platform == "ruby" else f"{number}-{platform}"] = when(entry["created_at"])
+        return times
 
     def nuget(self, package: Package) -> datetime:
         name, version = urllib.parse.quote(package.name.lower()), urllib.parse.quote(package.version.lower())
@@ -526,6 +666,127 @@ class Registries:
         if not isinstance(catalog, dict) or not catalog.get("created"):
             raise Missing(f"{package} is unlisted on nuget.org and its catalog entry has no time")
         return when(str(catalog["created"]))
+
+    def nugetall(self, name: str) -> dict[str, datetime]:
+        """Every listed version from the registration index, whose big packages page their versions out."""
+        index = fetch(f"https://api.nuget.org/v3/registration5-gz-semver2/{urllib.parse.quote(name.lower())}/index.json")
+        times = {}
+        for page in (index.get("items") if isinstance(index, dict) else None) or []:
+            leaves = page.get("items") if isinstance(page, dict) else None
+            if leaves is None and isinstance(page, dict) and str(page.get("@id", "")).startswith("https://api.nuget.org/"):
+                leaves = (fetch(page["@id"]) or {}).get("items")
+            for leaf in leaves or []:
+                entry = leaf.get("catalogEntry") if isinstance(leaf, dict) else None
+                if not isinstance(entry, dict) or not entry.get("version") or not entry.get("published"):
+                    continue
+                version = str(entry["version"]).lower()
+                try:
+                    stamp = when(str(entry["published"]))
+                except ValueError:
+                    continue
+                # unlisted versions are dated 1900 here; they are never suggested anyway
+                times[version] = stamp
+                if entry.get("listed") is False or stamp.year <= 1900:
+                    self.pull("nuget", name, version)
+        return times
+
+    def fixes(self, package: Package) -> list[str]:
+        """
+        The advisories that name this exact version as the fix. Malware reports
+        (MAL- ids) are left out: they list bad versions, not fixed ones.
+        """
+        ecosystem = OSV.get(package.ecosystem)
+        if ecosystem is None or self.offline:
+            return []
+        version = package.version.removeprefix("v") if package.ecosystem == "go" else package.version
+        found: list[str] = []
+        query: dict = {"package": {"name": package.name, "ecosystem": ecosystem}}
+        for _ in range(10):
+            answer = post("https://api.osv.dev/v1/query", query)
+            for vuln in answer.get("vulns") or []:
+                ident = str(vuln.get("id") or "")
+                if not ident or ident.startswith("MAL-") or vuln.get("withdrawn"):
+                    continue
+                for affected in vuln.get("affected") or []:
+                    for span in affected.get("ranges") or []:
+                        if any(str(event.get("fixed", "")).removeprefix("v") == version.removeprefix("v") for event in span.get("events") or []):
+                            if ident not in found:
+                                found.append(ident)
+            token = answer.get("next_page_token")
+            if not token:
+                break
+            query = {**query, "page_token": token}
+        return found
+
+    def jsr(self, package: Package) -> datetime:
+        try:
+            return self.every(package)
+        except Missing:
+            if (package.name, package.version) not in self.undated:
+                raise
+        # meta.json only dates versions published since mid 2025; the API dates every one
+        scope, _, short = package.name.removeprefix("@").partition("/")
+        data = fetch(f"https://api.jsr.io/scopes/{scope}/packages/{short}/versions/{urllib.parse.quote(package.version)}")
+        if not isinstance(data, dict) or not data.get("createdAt"):
+            raise Missing(f"{package} has no time on jsr.io")
+        return when(str(data["createdAt"]))
+
+    def jsrall(self, name: str) -> dict[str, datetime]:
+        # one file per package lists every version, with when it was created for the newer ones
+        data = fetch(f"https://jsr.io/{name}/meta.json")
+        times = {}
+        for version, entry in ((data.get("versions") if isinstance(data, dict) else None) or {}).items():
+            if not isinstance(entry, dict) or not entry.get("createdAt"):
+                self.undated.add((name, version))
+                continue
+            try:
+                times[version] = when(str(entry["createdAt"]))
+            except ValueError:
+                continue
+            if entry.get("yanked"):
+                self.pull("jsr", name, version)
+        return times
+
+    def tags(self, repository: str) -> dict[str, str]:
+        """A repository's tags and the commit each points at, newest pages first, fetched once per run."""
+        with self.once(f"tags:{repository}"):
+            if ("tags", repository) not in self.documents:
+                found: dict[str, str] = {}
+                for page in range(1, 4):
+                    batch = fetch(f"https://api.github.com/repos/{repository}/tags?per_page=100&page={page}")
+                    for entry in batch if isinstance(batch, list) else []:
+                        commit = entry.get("commit") if isinstance(entry, dict) else None
+                        if isinstance(commit, dict) and entry.get("name") and commit.get("sha"):
+                            found[str(entry["name"])] = str(commit["sha"])
+                    if not isinstance(batch, list) or len(batch) < 100:
+                        break
+                self.documents[("tags", repository)] = found  # type: ignore[assignment]
+            return self.documents[("tags", repository)]  # type: ignore[return-value]
+
+    def actions(self, package: Package) -> datetime:
+        """
+        When the commit an action is pinned to was released: the publish time of
+        the GitHub release whose tag points at that commit, preferring the most
+        exact tag. A commit with no release falls back to its commit time,
+        which the author controls, like the Go module proxy's.
+        """
+        repository, ref = package.name, package.version
+        tags = self.tags(repository)
+        commit = ref if SHA.match(ref) else tags.get(ref)
+        if commit is None:
+            raise Said(f"{ref} is a branch or an unknown tag, which has no release to date it by; pin a tag or a commit")
+        for tag in sorted((tag for tag, sha in tags.items() if sha == commit), key=specific, reverse=True):
+            try:
+                release = fetch(f"https://api.github.com/repos/{repository}/releases/tags/{urllib.parse.quote(tag)}")
+            except Missing:
+                continue
+            if isinstance(release, dict) and release.get("published_at"):
+                return when(str(release["published_at"]))
+        data = fetch(f"https://api.github.com/repos/{repository}/commits/{commit}")
+        stamp = ((data.get("commit") or {}).get("committer") or {}).get("date") if isinstance(data, dict) else None
+        if not stamp:
+            raise Missing(f"{repository}@{ref} has no release and no commit time")
+        return when(str(stamp))
 
     def maven(self, package: Package) -> datetime:
         group, _, artifact = package.name.partition(":")

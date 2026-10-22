@@ -420,3 +420,12 @@ def test_nuget_falls_back_to_the_package_file_while_the_registration_lags(fake, 
     assert fake.urls[-1] == "https://api.nuget.org/v3-flatcontainer/brand.new/1.0.0/brand.new.1.0.0.nupkg"
     with pytest.raises(Missing):
         lookups.published(Package("nuget", "Brand.New", "2.0.0"))
+
+
+def test_jsr_versions_too_old_for_meta_json_are_dated_by_the_api(fake, lookups):
+    old = fake.add("jsr", "@std/bytes", "1.0.6", at=datetime(2024, 5, 13, tzinfo=timezone.utc))
+    new = fake.add("jsr", "@std/bytes", "1.0.7", timedelta(days=10))
+    assert lookups.published(Package("jsr", "@std/bytes", "1.0.7")) == new
+    assert lookups.published(Package("jsr", "@std/bytes", "1.0.6")) == old
+    with pytest.raises(Missing):
+        lookups.published(Package("jsr", "@std/bytes", "9.9.9"))

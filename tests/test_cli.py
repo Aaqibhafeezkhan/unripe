@@ -136,3 +136,125 @@ def test_version(capsys):
         cli.main(["--version"])
     assert exit.value.code == 0
     assert capsys.readouterr().out.strip() == f"unripe {__version__}"
+
+
+def test_exit_zero_reports_but_passes(project, fake, capsys):
+    fake.add("npm", "left-pad", "1.3.0", timedelta(hours=2))
+    assert cli.main(["check", "--exit-zero"]) == 0
+    assert "left-pad 1.3.0" in capsys.readouterr().out
+
+
+def test_as_of_checks_as_if_it_were_then(project, fake, capsys):
+    published = fake.add("npm", "left-pad", "1.3.0", timedelta(days=10))
+    assert cli.main(["check"]) == 0
+    assert cli.main(["check", "--as-of", (published + timedelta(days=1)).isoformat()]) == 1
+    assert cli.main(["check", "--as-of", (published + timedelta(days=4)).strftime("%Y-%m-%dT%H:%MZ")]) == 0
+    capsys.readouterr()
+    assert cli.main(["check", "--as-of", "last tuesday"]) == 2
+    assert "--as-of 'last tuesday' is not a date" in capsys.readouterr().err
+
+
+def test_offline_uses_only_the_cache(project, fake, capsys):
+    assert cli.main(["check"]) == 0
+    fake.down.add("npm")
+    assert cli.main(["check", "--offline"]) == 0
+    (project / "package-lock.json").write_text(LOCK.replace("1.3.0", "1.3.1"))
+    fake.down.discard("npm")
+    fake.add("npm", "left-pad", "1.3.1", timedelta(days=400))
+    assert cli.main(["check", "--offline"]) == 1
+    assert "not in the cache, and --offline is set" in capsys.readouterr().out
+
+
+def test_annotate_and_json_side_output(project, fake, capsys):
+    fake.add("npm", "ms", "2.1.3", timedelta(hours=1))
+    assert cli.main(["check", "--annotate", "--json", "out.json"]) == 1
+    out = capsys.readouterr().out
+    assert "::error file=package-lock.json,line=" in out and out.index("fail: ") < out.index("::error")
+    assert json.loads((project / "out.json").read_text())["summary"]["unripe"] == 1
+    assert cli.main(["check", "--annotate", "--exit-zero"]) == 0
+    assert "::warning file=package-lock.json" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("form", ["github", "codequality", "junit"])
+def test_ci_formats_run(project, fake, capsys, form):
+    fake.add("npm", "ms", "2.1.3", timedelta(hours=1))
+    assert cli.main(["check", "--format", form]) == 1
+    assert "ms" in capsys.readouterr().out
+
+
+def test_no_colour_when_not_a_terminal_or_no_color_is_set(project, fake, capsys, monkeypatch):
+    fake.add("npm", "ms", "2.1.3", timedelta(hours=1))
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    cli.main(["check"])
+    assert "\033[31m" in capsys.readouterr().out
+    monkeypatch.setenv("NO_COLOR", "1")
+    cli.main(["check"])
+    assert "\033[" not in capsys.readouterr().out
+
+
+def test_a_config_further_up_sets_the_policy_but_not_the_paths(project, fake, capsys):
+    (project / ".git").mkdir()
+    (project / ".unripe.toml").write_text('min-age = "1w"\npaths = ["elsewhere"]\n')
+    (project / "web").mkdir()
+    (project / "package-lock.json").rename(project / "web" / "package-lock.json")
+    fake.add("npm", "left-pad", "1.3.0", timedelta(days=5))
+    import os
+
+    os.chdir(project / "web")
+    assert cli.main(["check"]) == 1
+    assert "minimum age 1w" in capsys.readouterr().out
+
+
+def test_explain_lists_recent_versions(fake, tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    fake.base = datetime.now(timezone.utc)
+    fake.add("npm", "lib", "2.0.0", timedelta(hours=3))
+    fake.add("npm", "lib", "1.2.0", timedelta(days=30))
+    fake.add("npm", "lib", "1.1.0", timedelta(days=60))
+    fake.add("npm", "lib", "2.0.0-rc.1", timedelta(days=5))
+    assert cli.main(["explain", "npm", "lib"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("npm lib: 4 versions, minimum age 3d, 1 prerelease not shown")
+    assert "too new, old enough at" in out and "1.2.0" in out and "<- newest old enough" in out
+    assert [row for row in out.splitlines() if "newest" in row][0].lstrip().startswith("1.2.0")
+    assert cli.main(["explain", "go", "golang.org/x/net"]) == 2
+    assert "give a version" in capsys.readouterr().err
+
+
+def test_config_shows_the_policy_and_native_settings(project, capsys):
+    (project / ".unripe.toml").write_text('min-age = "3d"\n[min-age-for]\nnpm = "7d"\n[[allow]]\npackage = "npm:axios@1.13.2"\nreason = "CVE"\nuntil = 2026-01-01\n')
+    (project / "pnpm-workspace.yaml").write_text("packages:\n  - web\nminimumReleaseAge: 1440\n")
+    (project / "uv.lock").write_text("version = 1\n")
+    assert cli.main(["config"]) == 0
+    out = capsys.readouterr().out
+    assert "min-age-for npm      1w" in out and out.startswith("unripe settings from .unripe.toml")
+    assert "allowed until 2026-01-01: CVE (ended)" in out
+    assert "pnpm       pnpm-workspace.yaml: minimumReleaseAge = 1440 (1d), shorter than unripe's 3d" in out
+    assert "npm, in .npmrc:\n      min-release-age=3" in out
+    assert 'exclude-newer = "3 days"' in out
+
+
+def test_init_writes_a_config_and_a_workflow(fake, tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/trunk\n")
+    assert cli.main(["init", "--github", "--min-age", "72h"]) == 0
+    assert 'min-age = "3d"' in (tmp_path / ".unripe.toml").read_text()
+    flow = (tmp_path / ".github" / "workflows" / "unripe.yml").read_text()
+    assert "branches: [trunk]" in flow and f"TexWoW/unripe@v{__version__}" in flow
+    from unripe.policy import build, config
+
+    settings, source = config(tmp_path)
+    assert build(settings, source=source).min_age == timedelta(days=3)
+    assert cli.main(["init"]) == 2
+    assert "already exists" in capsys.readouterr().err
+    assert cli.main(["init", "--force"]) == 0
+
+
+def test_report_writes_extra_formats(project, fake, capsys):
+    fake.add("npm", "ms", "2.1.3", timedelta(hours=1))
+    assert cli.main(["check", "--report", "codequality:cq.json", "--report", "junit:out.xml"]) == 1
+    assert json.loads((project / "cq.json").read_text())[0]["check_name"] == "unripe/too-new"
+    assert (project / "out.xml").read_text().startswith("<?xml")
+    assert cli.main(["check", "--report", "pdf:out.pdf"]) == 2
+    assert "use FORMAT:FILE" in capsys.readouterr().err

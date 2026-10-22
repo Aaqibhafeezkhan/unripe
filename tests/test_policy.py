@@ -135,3 +135,63 @@ def test_config_maven_repositories(tmp_path):
     (tmp_path / ".unripe.toml").write_text('maven-repositories = ["https://packages.confluent.io/maven"]\n')
     settings, source = config(tmp_path)
     assert build(settings, source=source).maven_repositories == ["https://packages.confluent.io/maven"]
+
+
+def test_min_age_for_an_ecosystem_and_a_package():
+    policy = build({"min-age": "3d", "min-age-for": {"npm": "7d", "npm:@types/*": "1d", "pypi:Django": "2w"}})
+    assert policy.age("npm", "react", "19.0.0") == timedelta(days=7)
+    assert policy.age("npm", "@types/node", "22.0.0") == timedelta(days=1)
+    assert policy.age("pypi", "django", "5.0.0") == timedelta(weeks=2)
+    assert policy.age("cargo", "serde", "1.0.0") == timedelta(days=3)
+    assert policy.varies()
+    assert not build({"min-age": "3d"}).varies()
+
+
+@pytest.mark.parametrize(
+    "settings, message",
+    [
+        ({"min-age-for": "7d"}, "should be a table"),
+        ({"min-age-for": {"npm": "soon"}}, "min-age-for npm"),
+        ({"allow": [{"reason": "x"}]}, "needs a package"),
+        ({"allow": [{"package": "a", "until": "next week"}]}, "should be a date"),
+        ({"allow": [{"package": "a", "why": "x"}]}, "takes package, reason and until"),
+        ({"allow-security-fixes": "yes"}, "true or false"),
+    ],
+)
+def test_bad_new_settings(settings, message):
+    with pytest.raises(PolicyError, match=message):
+        build(settings)
+
+
+def test_allow_entries_end_after_their_last_day():
+    from datetime import date, datetime, timezone
+
+    policy = build({"allow": [{"package": "npm:axios@1.13.2", "reason": "CVE fix", "until": date(2026, 10, 31)}, "pypi:requests"]})
+    entry, stale = policy.allowed("npm", "axios", "1.13.2", datetime(2026, 10, 31, 23, 0, tzinfo=timezone.utc))
+    assert entry and entry.describe() == "allowed until 2026-10-31: CVE fix" and stale == []
+    entry, stale = policy.allowed("npm", "axios", "1.13.2", datetime(2026, 11, 1, 1, 0, tzinfo=timezone.utc))
+    assert entry is None and [str(s.rule) for s in stale] == ["npm:axios@1.13.2"]
+    assert policy.allowed("npm", "axios", "1.13.3", datetime(2026, 10, 1, tzinfo=timezone.utc))[0] is None
+    assert policy.allowed("pypi", "requests", "2.0", datetime(2030, 1, 1, tzinfo=timezone.utc))[0].describe() == "allowed"
+
+
+def test_config_is_found_further_up_the_repository(tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".unripe.toml").write_text('min-age = "5d"\n')
+    (tmp_path / "web" / "src").mkdir(parents=True)
+    monkeypatch.delenv("UNRIPE_CONFIG", raising=False)
+    settings, source = config(tmp_path / "web" / "src")
+    assert settings == {"min-age": "5d"} and source == tmp_path.resolve() / ".unripe.toml"
+
+
+def test_config_is_not_looked_for_outside_a_repository(tmp_path, monkeypatch):
+    (tmp_path / ".unripe.toml").write_text('min-age = "5d"\n')
+    (tmp_path / "web").mkdir()
+    monkeypatch.delenv("UNRIPE_CONFIG", raising=False)
+    assert config(tmp_path / "web") == ({}, None)
+
+
+def test_unripe_config_names_a_file(tmp_path, monkeypatch):
+    (tmp_path / "policy.toml").write_text('min-age = "2d"\n')
+    monkeypatch.setenv("UNRIPE_CONFIG", str(tmp_path / "policy.toml"))
+    assert config(tmp_path)[0] == {"min-age": "2d"}
