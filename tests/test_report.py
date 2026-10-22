@@ -180,3 +180,16 @@ def test_colour_only_when_asked():
     assert "\033[" not in render(result(), "text")
     painted = render(result(), "text", color=True)
     assert "\033[31munripe\033[0m: 1 version" in painted and "\033[31mfail\033[0m:" in painted
+
+
+def test_dates_from_commit_times_are_called_that():
+    from dataclasses import replace
+
+    base = result()
+    action = Finding(Package("actions", "acme/setup", "a" * 40), "ok", NOW - timedelta(days=60), 60 * 86400, basis="commit")
+    base.findings = [replace(base.findings[0], basis="commit"), *base.findings[1:], action]
+    out = render(base, "text", verbose=True)
+    assert "published 2026-10-20 07:00 UTC, old enough at 2026-10-23 07:00 UTC, by its commit time" in out
+    assert "8w old by its commit time, which the author sets" in out
+    data = json.loads(render(base, "json"))
+    assert [f["dated_by"] for f in data["findings"]] == ["commit", None, "registry", None, "commit"]

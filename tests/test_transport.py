@@ -116,3 +116,46 @@ def test_a_connection_the_server_dropped_is_opened_again(servers):
     assert registries.fetch(f"{base}/drop") == {}
     assert registries.fetch(f"{base}/json") == {"path": "/json"}
     assert len({port for _, port, _ in Handler.seen}) == 2
+
+
+def test_an_answer_too_big_to_hold_is_refused(servers, monkeypatch):
+    import gzip as gz
+
+    base, _ = servers
+    monkeypatch.setattr(registries, "LIMIT", 10)
+    with pytest.raises(registries.Unreachable, match="more than"):
+        registries.fetch(f"{base}/json?padding=0123456789")
+    monkeypatch.setattr(registries, "send", lambda request, timeout: Zipped(gz.compress(b"{" + b" " * 100 + b"}")))
+    with pytest.raises(registries.Unreachable, match="more than"):
+        registries.fetch(f"{base}/zipped")
+
+
+class Zipped:
+    """A gzipped answer that is small on the wire and big unpacked."""
+
+    def __init__(self, body: bytes):
+        self.body, self.headers = body, {"Content-Encoding": "gzip"}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def read(self, limit: int = -1) -> bytes:
+        return self.body
+
+
+def test_a_certificate_error_says_what_to_set_and_is_not_retried(monkeypatch):
+    import ssl
+
+    calls = []
+
+    def refuse(request, timeout):
+        calls.append(request.full_url)
+        raise urllib.error.URLError(ssl.SSLCertVerificationError(1, "certificate verify failed: unable to get local issuer certificate"))
+
+    monkeypatch.setattr(registries, "send", refuse)
+    with pytest.raises(registries.Unreachable, match="set UNRIPE_CA_BUNDLE or SSL_CERT_FILE"):
+        registries.fetch("https://registry.example/thing")
+    assert len(calls) == 1

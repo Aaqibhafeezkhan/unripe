@@ -22,6 +22,7 @@ import re
 import ssl
 import threading
 import time
+import zlib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -35,6 +36,10 @@ from unripe.model import Package
 AGENT = f"unripe/{__version__} (+https://github.com/TexWoW/unripe)"
 TIMEOUT = 20
 TRIES = 4
+# no registry answer unripe reads comes near this; a bigger one is refused rather than held in memory
+LIMIT = 256 * 1024 * 1024
+# what a finding dated by a commit time, rather than by a registry, says about it
+COMMIT = "commit"
 # how many requests this process has made, for --verbose
 REQUESTS = [0]
 COUNTING = threading.Lock()
@@ -177,9 +182,14 @@ def ask(url: str, accept: str = "*/*", method: str = "GET", body: bytes | None =
         try:
             with send(request, TIMEOUT) as response:
                 found = {name.lower(): value for name, value in response.headers.items()}
-                body = response.read()
+                body = response.read(LIMIT + 1)
                 if found.get("content-encoding") == "gzip" and body:
-                    body = gzip.decompress(body)
+                    unzip = zlib.decompressobj(wbits=31)
+                    body = unzip.decompress(body, LIMIT + 1)
+                    if unzip.unconsumed_tail:
+                        body += b"x"
+                if len(body) > LIMIT:
+                    raise Unreachable(f"{url}: answered with more than {LIMIT // 1024 // 1024} MB")
                 return found, body
         except urllib.error.HTTPError as error:
             if error.code in (404, 410):
@@ -193,8 +203,13 @@ def ask(url: str, accept: str = "*/*", method: str = "GET", body: bytes | None =
             retry = error.headers.get("Retry-After")
             if retry and retry.isdigit():
                 delay = max(delay, min(float(retry), 60.0))
-        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError, EOFError, gzip.BadGzipFile, ssl.SSLError) as error:
-            last = str(getattr(error, "reason", error))
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError, EOFError, gzip.BadGzipFile, zlib.error, ssl.SSLError) as error:
+            reason = getattr(error, "reason", error)
+            last = str(reason)
+            if isinstance(reason, ssl.SSLCertVerificationError):
+                # retrying does not help; a proxy that inspects TLS needs its CA bundle
+                last += " (behind a proxy that inspects TLS? set UNRIPE_CA_BUNDLE or SSL_CERT_FILE to its CA bundle)"
+                break
         if attempt < TRIES - 1:
             time.sleep(delay + random.random() * 0.5)
             delay *= 2
@@ -247,6 +262,7 @@ OSV = {
     "rubygems": "RubyGems",
     "nuget": "NuGet",
     "maven": "Maven",
+    "pub": "Pub",
 }
 
 
@@ -299,6 +315,11 @@ class Cache:
         with self.lock:
             if self.table(table).get(key) != value:
                 self.table(table)[key] = value
+                self.dirty.add(table)
+
+    def forget(self, table: str, key: str) -> None:
+        with self.lock:
+            if self.table(table).pop(key, None) is not None:
                 self.dirty.add(table)
 
     def learn(self, ecosystem: str, name: str, version: str, published: datetime) -> None:
@@ -518,6 +539,7 @@ class Registries:
         self.replaying = now is not None and now < datetime.now(timezone.utc) - timedelta(hours=1)
         self.npmurl = (npmurl or os.environ.get("UNRIPE_NPM_REGISTRY") or "https://registry.npmjs.org").rstrip("/")
         self.pypiurl = (pypiurl or os.environ.get("UNRIPE_PYPI_URL") or "https://pypi.org").rstrip("/")
+        self.conanurl = (os.environ.get("UNRIPE_CONAN_REMOTE") or "https://center2.conan.io").rstrip("/")
         self.lookups: dict[str, Callable[[Package], datetime]] = {
             "npm": self.npm,
             "pypi": self.pypi,
@@ -529,6 +551,11 @@ class Registries:
             "maven": self.maven,
             "jsr": self.jsr,
             "actions": self.actions,
+            "pub": self.pub,
+            "cocoapods": self.cocoapods,
+            "swift": self.swift,
+            "terraform": self.terraform,
+            "conan": self.conan,
         }
         # registries whose one answer covers every version are asked once per package
         self.pending: dict[str, threading.Lock] = {}
@@ -537,6 +564,8 @@ class Registries:
         self.documents: dict[tuple[str, str], dict[str, datetime]] = {}
         # versions that were yanked or unlisted, never suggested
         self.pulled: dict[tuple[str, str], set[str]] = {}
+        # versions the maintainers mark deprecated (or abandoned): still installable, suggested only when nothing else is
+        self.deprecated: dict[tuple[str, str], set[str]] = {}
         # npm versions that were unpublished: the registry keeps their time but not the version
         self.gone: set[tuple[str, str]] = set()
         # jsr versions listed without a time
@@ -549,6 +578,9 @@ class Registries:
             "rubygems": self.rubygemsall,
             "nuget": self.nugetall,
             "jsr": self.jsrall,
+            "pub": self.puball,
+            "cocoapods": self.cocoapodsall,
+            "terraform": self.terraformall,
         }
 
     def published(self, package: Package) -> datetime:
@@ -606,8 +638,22 @@ class Registries:
                 raise Missing(f"{package} is not in the registry")
             return times[package.version]
 
+    def basis(self, package: Package) -> str:
+        """COMMIT for a version dated by a commit time, which its author sets; empty for one dated by a registry."""
+        return self.cache.recall("basis", f"{package.ecosystem}:{package.name}@{package.version}") or ""
+
+    def dated(self, ecosystem: str, name: str, version: str, basis: str) -> None:
+        key = f"{ecosystem}:{name}@{version}"
+        if basis:
+            self.cache.note("basis", key, basis)
+        else:
+            self.cache.forget("basis", key)
+
     def pull(self, ecosystem: str, name: str, version: str) -> None:
         self.pulled.setdefault((ecosystem, name), set()).add(version)
+
+    def deprecate(self, ecosystem: str, name: str, version: str) -> None:
+        self.deprecated.setdefault((ecosystem, name), set()).add(version)
 
     def npm(self, package: Package) -> datetime:
         stamp = self.every(package)
@@ -634,7 +680,7 @@ class Registries:
                     self.gone.add((name, version))
                     self.pull("npm", name, version)
                 elif isinstance(listed[version], dict) and listed[version].get("deprecated"):
-                    self.pull("npm", name, version)
+                    self.deprecate("npm", name, version)
         return times
 
     def pypi(self, package: Package) -> datetime:
@@ -683,6 +729,7 @@ class Registries:
             raise Missing(f"{package} has no time in the module proxy")
         # the proxy's time is the commit's, which the author chooses
         committed = when(data["Time"])
+        self.dated("go", package.name, package.version, COMMIT)
         if not gosumdb(package.name):
             return committed
         try:
@@ -693,6 +740,7 @@ class Registries:
         window = self.sumdb.first(record)
         if window is None:
             return committed
+        self.dated("go", package.name, package.version, "")
         earliest, _, guess = window
         # a commit inside the window is the usual case, a version tagged soon after it was made.
         # a commit from before the window is the one to distrust: an old commit tagged
@@ -720,7 +768,7 @@ class Registries:
                 except ValueError:
                     continue
                 if current.get("abandoned"):
-                    self.pull("composer", name, str(current["version"]).lstrip("v"))
+                    self.deprecate("composer", name, str(current["version"]).lstrip("v"))
         return times
 
     def rubygems(self, package: Package) -> datetime:
@@ -866,18 +914,103 @@ class Registries:
         commit = ref if SHA.match(ref) else tags.get(ref)
         if commit is None:
             raise Said(f"{ref} is a branch or an unknown tag, which has no release to date it by; pin a tag or a commit")
+        return self.released(repository, commit, ref, "actions")
+
+    def swift(self, package: Package) -> datetime:
+        """A Swift package at a version is dated like an action at a tag; the tag may have a `v` in front."""
+        repository, ref = package.name, package.version
+        if SHA.match(ref):
+            return self.released(repository, ref, ref, "swift")
+        tags = self.tags(repository)
+        tag = next((name for name in (ref, f"v{ref}") if name in tags), None)
+        if tag is None:
+            raise Said(f"{repository} has no tag {ref}")
+        return self.released(repository, tags[tag], ref, "swift")
+
+    def released(self, repository: str, commit: str, ref: str, ecosystem: str) -> datetime:
+        """When a commit was released on GitHub, or failing that, its commit time."""
+        tags = self.tags(repository)
         for tag in sorted((tag for tag, sha in tags.items() if sha == commit), key=specific, reverse=True):
             try:
                 release = fetch(f"https://api.github.com/repos/{repository}/releases/tags/{urllib.parse.quote(tag)}")
             except Missing:
                 continue
             if isinstance(release, dict) and release.get("published_at"):
+                self.dated(ecosystem, repository, ref, "")
                 return when(str(release["published_at"]))
         data = fetch(f"https://api.github.com/repos/{repository}/commits/{commit}")
         stamp = ((data.get("commit") or {}).get("committer") or {}).get("date") if isinstance(data, dict) else None
         if not stamp:
             raise Missing(f"{repository}@{ref} has no release and no commit time")
+        self.dated(ecosystem, repository, ref, COMMIT)
         return when(str(stamp))
+
+    def pub(self, package: Package) -> datetime:
+        return self.every(package)
+
+    def puball(self, name: str) -> dict[str, datetime]:
+        data = fetch(f"https://pub.dev/api/packages/{urllib.parse.quote(name)}")
+        times = {}
+        for entry in (data.get("versions") if isinstance(data, dict) else None) or []:
+            if isinstance(entry, dict) and entry.get("version") and entry.get("published"):
+                try:
+                    times[str(entry["version"])] = when(str(entry["published"]))
+                except ValueError:
+                    continue
+                if entry.get("retracted"):
+                    self.pull("pub", name, str(entry["version"]))
+        return times
+
+    def cocoapods(self, package: Package) -> datetime:
+        return self.every(package)
+
+    def cocoapodsall(self, name: str) -> dict[str, datetime]:
+        data = fetch(f"https://trunk.cocoapods.org/api/v1/pods/{urllib.parse.quote(name)}")
+        times = {}
+        for entry in (data.get("versions") if isinstance(data, dict) else None) or []:
+            if not isinstance(entry, dict) or not entry.get("name") or not entry.get("created_at"):
+                continue
+            stamp = str(entry["created_at"])
+            try:
+                # trunk writes "2024-03-31 01:24:57 UTC"
+                times[str(entry["name"])] = datetime.strptime(stamp.replace(" UTC", ""), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+        return times
+
+    def terraform(self, package: Package) -> datetime:
+        return self.every(package)
+
+    def terraformall(self, name: str) -> dict[str, datetime]:
+        data = fetch(f"https://registry.terraform.io/v2/providers/{urllib.parse.quote(name)}?include=provider-versions")
+        times = {}
+        for entry in (data.get("included") if isinstance(data, dict) else None) or []:
+            attributes = entry.get("attributes") if isinstance(entry, dict) and entry.get("type") == "provider-versions" else None
+            if isinstance(attributes, dict) and attributes.get("version") and attributes.get("published-at"):
+                try:
+                    times[str(attributes["version"])] = when(str(attributes["published-at"]))
+                except ValueError:
+                    continue
+        return times
+
+    def conan(self, package: Package) -> datetime:
+        """
+        When the locked recipe revision reached the remote, as the remote
+        recorded it. Without a revision, the latest one, which is what Conan
+        would install.
+        """
+        version, _, revision = package.version.partition("#")
+        base = f"{self.conanurl}/v2/conans/{urllib.parse.quote(package.name)}/{urllib.parse.quote(version)}/_/_"
+        if not revision:
+            latest = fetch(f"{base}/latest")
+            if not isinstance(latest, dict) or not latest.get("time"):
+                raise Missing(f"{package} has no revision on {self.conanurl}")
+            return when(str(latest["time"]))
+        data = fetch(f"{base}/revisions")
+        for entry in (data.get("revisions") if isinstance(data, dict) else None) or []:
+            if isinstance(entry, dict) and entry.get("revision") == revision and entry.get("time"):
+                return when(str(entry["time"]))
+        raise Said(f"{package.name}/{version} has no recipe revision {revision} on {self.conanurl}")
 
     def maven(self, package: Package) -> datetime:
         group, _, artifact = package.name.partition(":")

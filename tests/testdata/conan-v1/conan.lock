@@ -1,0 +1,22 @@
+{
+ "graph_lock": {
+  "nodes": {
+   "0": {
+    "options": "",
+    "requires": ["1"],
+    "path": "conanfile.txt",
+    "context": "host"
+   },
+   "1": {
+    "ref": "zlib/1.2.13",
+    "options": "fPIC=True\nshared=False",
+    "package_id": "dfbe50feef7f3c6223a476cd5aeadb687084a646",
+    "prev": "0",
+    "context": "host"
+   }
+  },
+  "revisions_enabled": false
+ },
+ "version": "0.4",
+ "profile_host": "[settings]\narch=x86_64\n"
+}

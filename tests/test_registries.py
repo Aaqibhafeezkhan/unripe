@@ -429,3 +429,63 @@ def test_jsr_versions_too_old_for_meta_json_are_dated_by_the_api(fake, lookups):
     assert lookups.published(Package("jsr", "@std/bytes", "1.0.6")) == old
     with pytest.raises(Missing):
         lookups.published(Package("jsr", "@std/bytes", "9.9.9"))
+
+
+
+@pytest.mark.parametrize("ecosystem, name, version", [("pub", "sqlite3", "2.9.4"), ("cocoapods", "GRDB.swift", "5.26.0"), ("terraform", "hashicorp/aws", "5.31.0")])
+def test_app_registries_answer_and_suggest(fake, lookups, ecosystem, name, version):
+    fresh = fake.add(ecosystem, name, version, timedelta(hours=3))
+    fake.add(ecosystem, name, "0.0.1", timedelta(days=90))
+    assert lookups.published(Package(ecosystem, name, version)) == fresh
+    assert set(lookups.versions(ecosystem, name)) == {version, "0.0.1"}
+
+
+def test_swift_is_dated_by_the_release_of_its_tag(fake, lookups):
+    fake.tags["apple/swift-argument-parser"] = {"1.7.0": "c" * 40, "1.6.0": "d" * 40}
+    fake.releases[("apple/swift-argument-parser", "1.7.0")] = NOW - timedelta(days=2)
+    fake.tags["kylef/PathKit"] = {"v1.0.1": "e" * 40}
+    fake.commits[("kylef/PathKit", "e" * 40)] = NOW - timedelta(days=900)
+    assert lookups.published(Package("swift", "apple/swift-argument-parser", "1.7.0")) == NOW - timedelta(days=2)
+    # a tag with a v in front, and no release: the commit time
+    assert lookups.published(Package("swift", "kylef/PathKit", "1.0.1")) == NOW - timedelta(days=900)
+    with pytest.raises(Missing):
+        lookups.published(Package("swift", "kylef/PathKit", "9.9.9"))
+
+
+def test_conan_is_dated_by_the_locked_recipe_revision(fake, lookups):
+    fake.add("conan", "zlib", "1.3.1#aaaa", timedelta(days=300))
+    newer = fake.add("conan", "zlib", "1.3.1#bbbb", timedelta(hours=6))
+    old = lookups.published(Package("conan", "zlib", "1.3.1#aaaa"))
+    assert old == NOW - timedelta(days=300)
+    assert fake.urls[-1] == "https://center2.conan.io/v2/conans/zlib/1.3.1/_/_/revisions"
+    # without a revision, the latest one: what conan would install
+    assert lookups.published(Package("conan", "zlib", "1.3.1")) == newer
+    with pytest.raises(Missing, match="no recipe revision cccc"):
+        lookups.published(Package("conan", "zlib", "1.3.1#cccc"))
+    with pytest.raises(Missing):
+        lookups.published(Package("conan", "nothing", "1.0#aaaa"))
+
+
+def test_dates_from_commit_times_are_marked_until_a_release_appears(fake, lookups):
+    fake.tags["acme/tool"] = {"v1": "a" * 40, "v2": "b" * 40}
+    fake.releases[("acme/tool", "v2")] = NOW - timedelta(days=30)
+    fake.commits[("acme/tool", "a" * 40)] = NOW - timedelta(days=60)
+    first, second = Package("actions", "acme/tool", "v1"), Package("actions", "acme/tool", "v2")
+    assert lookups.published(first) == NOW - timedelta(days=60)
+    assert lookups.published(second) == NOW - timedelta(days=30)
+    assert lookups.basis(first) == "commit" and lookups.basis(second) == ""
+    fake.releases[("acme/tool", "v1")] = NOW - timedelta(days=50)
+    assert lookups.published(first) == NOW - timedelta(days=50)
+    assert lookups.basis(first) == ""
+
+
+def test_a_go_module_outside_the_checksum_database_is_dated_by_its_commit(fake, lookups, monkeypatch):
+    monkeypatch.setenv("GONOSUMDB", "git.example.com/*")
+    fake.add("go", "git.example.com/team/lib", "v1.0.0", timedelta(days=40))
+    package = Package("go", "git.example.com/team/lib", "v1.0.0")
+    lookups.published(package)
+    assert lookups.basis(package) == "commit"
+    fake.add("go", "github.com/BurntSushi/toml", "v1.3.2", timedelta(days=10))
+    public = Package("go", "github.com/BurntSushi/toml", "v1.3.2")
+    lookups.published(public)
+    assert lookups.basis(public) == ""

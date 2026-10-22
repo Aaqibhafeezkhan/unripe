@@ -24,6 +24,9 @@ fixture and `fake.add(ecosystem, name, version, age)`.
 - Unknown is never ok. If a registry can't answer, the version is
   `unknown`, which fails by default. Don't add code paths that quietly pass.
 - A broken lockfile is reported as unreadable, never treated as empty.
+- A registry's own record of a publish beats a time the author can set. When
+  a git commit time is all there is, record it with `Registries.dated` so the
+  report says so.
 - Messages and docs are short and plain.
 
 ## Adding an ecosystem
@@ -44,7 +47,10 @@ This is the most useful contribution right now. The pieces are:
 4. A real lockfile in `tests/testdata/<name>/` with the awkward cases in it,
    tests in `tests/test_lockfiles.py`, and the registry's answer shape in
    the fake in `tests/conftest.py`.
-5. A row in the README's table.
+5. A row in the README's table, and the ecosystem in `docs/json.md`.
+
+`src/unripe/lockfiles/apps.py` (pub, CocoaPods, Swift, Terraform) is a good
+recent example of all five.
 
 Real lockfiles are much better fixtures than made up ones. Generate one with
 the package manager if you can, then add the odd entries by hand.

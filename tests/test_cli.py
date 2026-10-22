@@ -258,3 +258,43 @@ def test_report_writes_extra_formats(project, fake, capsys):
     assert (project / "out.xml").read_text().startswith("<?xml")
     assert cli.main(["check", "--report", "pdf:out.pdf"]) == 2
     assert "use FORMAT:FILE" in capsys.readouterr().err
+
+
+def test_quiet_prints_nothing_when_the_check_passes(project, fake, capsys):
+    assert cli.main(["check", "--quiet"]) == 0
+    assert capsys.readouterr().out == ""
+    fake.add("npm", "left-pad", "1.3.0", timedelta(hours=2))
+    assert cli.main(["check", "-q", "--no-cache"]) == 1
+    assert "unripe: 1 version" in capsys.readouterr().out
+
+
+def test_json_says_its_schema(project, capsys):
+    assert cli.main(["check", "--format", "json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["schema"] == 1 and data["findings"][0]["dated_by"] == "registry"
+
+
+def test_init_dry_run_writes_nothing(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["init", "--github", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "would write .unripe.toml:" in out and "would write .github/workflows/unripe.yml:" in out
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_doctor(project, fake, capsys):
+    fake.add("npm", "left-pad", "1.3.0", timedelta(days=3000))
+    (project / "Cargo.lock").write_text("[[package]\n")
+    assert cli.main(["doctor"]) == 1
+    out = capsys.readouterr().out
+    assert "lockfiles  2 lockfiles found: Cargo.lock, package-lock.json" in out
+    assert "could not read Cargo.lock" in out
+    assert "  npm       11 versions locked, registry answers (left-pad 1.3.0 published" in out
+    assert out.rstrip().endswith("doctor: 1 problem")
+    (project / "Cargo.lock").unlink()
+    fake.down.add("npm")
+    assert cli.main(["doctor"]) == 1
+    assert "registry did not answer" in capsys.readouterr().out
+    fake.down.clear()
+    assert cli.main(["doctor"]) == 0
+    assert "doctor: everything works" in capsys.readouterr().out

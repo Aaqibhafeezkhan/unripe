@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.6.0 (2026-10-22)
+
+New things to check:
+
+- Dart and Flutter: `pubspec.lock`, dated by pub.dev. Retracted versions are
+  never suggested.
+- CocoaPods: `Podfile.lock`, dated by the CocoaPods trunk.
+- Swift: `Package.resolved` (all three formats), for packages on GitHub,
+  dated by the GitHub release for the tag.
+- Terraform: `.terraform.lock.hcl`, dated by the Terraform registry.
+- Conan: `conan.lock` from Conan 1 and 2, dated by when ConanCenter received
+  the locked recipe revision. `UNRIPE_CONAN_REMOTE` points it at another
+  server with Conan's v2 API.
+
+For AI coding agents:
+
+- `unripe mcp` runs a Model Context Protocol server on stdio with three
+  read-only tools: `check_package`, `check_lockfiles` and
+  `cooldown_settings`. It supports the 2026-07-28 protocol and the older
+  handshake. [docs/agents.md](docs/agents.md) has the setup for Claude Code,
+  Codex, VS Code, Cursor, Claude Desktop, Windsurf and Gemini CLI.
+
+Trust:
+
+- A version dated by a git commit time, which its author sets, is marked as
+  such: `by its commit time` in text, `"dated_by": "commit"` in JSON. That
+  covers actions and Swift tags with no release, and Go modules outside the
+  checksum database.
+- A publish time more than an hour in the future is reported as unknown
+  instead of being used.
+- Deprecated versions (npm deprecations, abandoned Composer packages) are
+  no longer treated like yanked ones. They can still be suggested, after
+  every version that isn't deprecated, and `explain` marks them.
+- A registry answer over 256 MB is refused rather than read into memory.
+- A TLS certificate error is not retried, and says to set
+  `UNRIPE_CA_BUNDLE` or `SSL_CERT_FILE`.
+
+Commands:
+
+- `unripe doctor` shows the config, the lockfiles and whether each reads,
+  the cache, proxy and CA settings, and whether each registry the lockfiles
+  use answers.
+- `unripe check --quiet` prints nothing when the check passes.
+- `unripe init --dry-run` prints what it would write.
+- The JSON report has `"schema": 1`, described in
+  [docs/json.md](docs/json.md).
+
+Docs: pipelines for Azure Pipelines, Jenkins, CircleCI and Bitbucket
+([docs/ci.md](docs/ci.md)), Renovate and Dependabot
+([docs/bots.md](docs/bots.md)), a threat model, replays of past attacks
+([docs/case-studies.md](docs/case-studies.md)), and a
+[roadmap](ROADMAP.md).
+
 ## 0.5.1 (2026-10-22)
 
 - Much faster with nothing cached. Each lookup thread keeps its connection

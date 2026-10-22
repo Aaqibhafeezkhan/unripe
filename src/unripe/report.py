@@ -114,7 +114,8 @@ def verdict(result: Result) -> str:
 LOCKFILES = (
     "no lockfiles found. unripe reads package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, yarn.lock,\n"
     "bun.lock, deno.lock, uv.lock, pylock.toml, poetry.lock, Pipfile.lock, requirements*.txt, Cargo.lock,\n"
-    "go.mod, composer.lock, Gemfile.lock, packages.lock.json and gradle.lockfile"
+    "go.mod, composer.lock, Gemfile.lock, packages.lock.json, gradle.lockfile, pubspec.lock, Podfile.lock,\n"
+    "Package.resolved, .terraform.lock.hcl and conan.lock"
 )
 
 
@@ -133,6 +134,8 @@ def text(result: Result, verbose: bool = False, color: bool = False) -> str:
     ]
     if verbose:
         groups += [("ok", "old enough"), ("excluded", "skipped by an exclude rule")]
+    # the ecosystem column, as wide as the longest name shown (terraform, cocoapods)
+    pad = max([8, *(len(f.package.ecosystem) for f in result.findings if f.state in dict(groups))])
     for state, meaning in groups:
         chosen = [finding for finding in result.findings if finding.state == state]
         if not chosen:
@@ -147,15 +150,19 @@ def text(result: Result, verbose: bool = False, color: bool = False) -> str:
                 detail = f"{ago(finding.age_seconds)} old, published {stamp(finding.published)}, old enough at {stamp(ripe(finding, result))}"
                 if minimum(finding, result) != result.policy.min_age:
                     detail += f" ({spoken(minimum(finding, result))} minimum)"
+                if finding.basis:
+                    detail += f", by its {finding.basis} time"
             elif state == "ok":
                 detail = f"{ago(finding.age_seconds)} old"
+                if finding.basis:
+                    detail += f" by its {finding.basis} time, which the author sets"
             else:
                 detail = finding.reason
-            out.append(f"  {package.ecosystem:<8} {label}  {detail}")
+            out.append(f"  {package.ecosystem:<{pad}} {label}  {detail}")
             if state in ("unripe", "unknown", "allowed"):
-                out.append(f"  {'':<8} {where(finding)}")
+                out.append(f"  {'':<{pad}} {where(finding)}")
             if finding.instead:
-                out.append(f"  {'':<8} {instead(finding)}")
+                out.append(f"  {'':<{pad}} {instead(finding)}")
 
     for _, message in result.unreadable:
         out.append("")
@@ -177,6 +184,7 @@ def jsondoc(result: Result) -> str:
             "version": f.package.version,
             "state": f.state,
             "published": f.published.isoformat() if f.published else None,
+            "dated_by": (f.basis or "registry") if f.published else None,
             "age_seconds": round(f.age_seconds) if f.age_seconds is not None else None,
             "old_enough_at": ripe(f, result).isoformat() if f.published else None,
             "min_age_seconds": int(minimum(f, result).total_seconds()),
@@ -186,6 +194,8 @@ def jsondoc(result: Result) -> str:
         }
 
     document = {
+        # bumped only when a field changes meaning or goes away; new fields can appear at any time
+        "schema": 1,
         "unripe": __version__,
         "checked_at": result.checked_at.isoformat(),
         "result": verdict(result),

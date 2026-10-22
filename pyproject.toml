@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "unripe"
-version = "0.5.1"
-description = "Fail the build when a locked dependency is younger than you trust. One check for npm, pnpm, yarn, bun, Deno, PyPI, Cargo, Go, Composer, RubyGems, NuGet and Gradle lockfiles, and GitHub Actions."
+version = "0.6.0"
+description = "Fail the build when a locked dependency is younger than you trust. One check for npm, pnpm, yarn, bun, Deno, PyPI, Cargo, Go, Composer, RubyGems, NuGet, Gradle, Dart, CocoaPods, Swift, Terraform and Conan lockfiles, GitHub Actions, and an MCP server for AI agents."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{ name = "Tex" }]
-keywords = ["supply-chain", "security", "lockfile", "dependencies", "cooldown", "ci", "npm", "pypi", "cargo", "go", "nuget", "gradle", "maven", "deno", "jsr", "github-actions"]
+keywords = ["supply-chain", "security", "lockfile", "dependencies", "cooldown", "ci", "npm", "pypi", "cargo", "go", "nuget", "gradle", "maven", "deno", "jsr", "github-actions", "dart", "flutter", "cocoapods", "swift", "terraform", "conan", "mcp"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

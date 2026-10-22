@@ -334,3 +334,83 @@ def test_workflows_are_only_found_when_asked(tmp_path):
     assert lockfiles.find([str(tmp_path)]) == []
     names = sorted(p.name for p in lockfiles.find([str(tmp_path)], workflows=True))
     assert names == ["action.yml", "ci.yml"]
+
+
+
+def test_pubspec_lock_keeps_pub_dev_only():
+    assert pairs("pub/pubspec.lock") == {("args", "2.7.0"), ("collection", "1.19.1"), ("sqlite3", "2.9.4")}
+    assert {p.ecosystem for p in parse("pub/pubspec.lock")} == {"pub"}
+
+
+def test_podfile_lock_keeps_trunk_root_pods_only():
+    assert pairs("cocoapods/Podfile.lock") == {
+        ("CocoaLumberjack", "3.7.4"),
+        ("GRDB.swift", "5.26.0"),
+        ("Logging", "1.4.0"),
+        ("SwiftProtobuf", "1.38.1"),
+    }
+
+
+def test_old_podfile_lock_without_spec_repos():
+    text = "PODS:\n  - Alamofire (4.9.1)\n  - Local (1.0.0)\n\nEXTERNAL SOURCES:\n  Local:\n    :path: ../Local\n\nCOCOAPODS: 1.6.1\n"
+    assert {(p.name, p.version) for p in lockfiles.read(text, "Podfile.lock")} == {("Alamofire", "4.9.1")}
+
+
+def test_package_resolved_keeps_github_pins_with_versions_or_commits():
+    assert pairs("swift/Package.resolved") == {
+        ("kylef/PathKit", "1.0.1"),
+        ("apple/swift-argument-parser", "1.7.0"),
+        ("example/nightly", "0123456789abcdef0123456789abcdef01234567"),
+    }
+    assert pairs("swift-v1/Package.resolved") == {("maxdesiatov/XMLCoder", "0.14.0")}
+
+
+def test_terraform_lock_keeps_the_public_registry_only():
+    assert pairs("terraform/.terraform.lock.hcl") == {("hashicorp/aws", "5.31.0"), ("integrations/github", "5.42.0")}
+
+
+def test_find_skips_downloaded_pods_and_providers(tmp_path):
+    for folder in ("Pods", ".terraform/providers", ".dart_tool", ".build"):
+        (tmp_path / folder).mkdir(parents=True)
+        (tmp_path / folder / "Podfile.lock").write_text("PODS:\n")
+    (tmp_path / "Podfile.lock").write_text("PODS:\n")
+    assert [p.name for p in lockfiles.find([str(tmp_path)])] == ["Podfile.lock"]
+
+
+def test_conan_lock_keeps_conancenter_references_with_their_revision():
+    assert pairs("conan/conan.lock") == {
+        ("zlib", "1.3.1#b8bc2603263cf7eccbd6e17e66b0ed76"),
+        ("openssl", "3.3.2#9f9f130d58e7c13e76bb8a559f0a6a8b"),
+        ("fmt", "11.0.2#5c7438ef4d5d69ab106a41e460ce11f3"),
+        ("cmake", "3.30.5#a0fa3ff9e3a2ee6a1d4e8c6fa7b2c1d0"),
+    }
+    # conan 1 wrote a graph of nodes, here without revisions
+    assert pairs("conan-v1/conan.lock") == {("zlib", "1.2.13")}
+    with pytest.raises(lockfiles.Unreadable):
+        lockfiles.read("[]", "conan.lock")
+
+
+def test_damaged_lockfiles_never_crash_or_invent_packages():
+    """Every fixture cut short and scrambled: a parser either reads packages or says it cannot, never anything else."""
+    import random
+
+    chance = random.Random(20261022)
+    for path in lockfiles.find([str(TESTDATA)]):
+        if path.name == "bun.lockb":
+            continue
+        text = path.read_text("utf-8")
+        damaged = [text[: len(text) * share // 8] for share in range(8)]
+        for _ in range(6):
+            letters = list(text)
+            for spot in chance.sample(range(len(letters)), min(len(letters), 12)):
+                letters[spot] = chance.choice("{}[]\":,=\n #@/\x00")
+            damaged.append("".join(letters))
+        damaged += ["", "\x00\x01\x02", "null", "[]", '{"packages": 1}', "﻿"]
+        for broken in damaged:
+            try:
+                found = lockfiles.read(broken, path)
+            except lockfiles.Unreadable:
+                continue
+            assert isinstance(found, list), path
+            for package in found:
+                assert package.ecosystem and package.name and package.version, (path, package)

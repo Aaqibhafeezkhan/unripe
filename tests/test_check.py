@@ -114,6 +114,13 @@ def test_every_fixture_checks_with_a_registry_that_knows_everything(fake, lookup
         if path.name == "bun.lockb":
             continue
         for package in lockfiles.read(path.read_text("utf-8"), path):
+            if package.ecosystem == "swift":
+                # swift packages are dated by their github release
+                commit = package.version if len(package.version) == 40 else f"{abs(hash(package.version)):040d}"[:40]
+                fake.tags.setdefault(package.name, {})[package.version] = commit
+                fake.releases[(package.name, package.version)] = NOW - timedelta(days=400)
+                fake.commits[(package.name, commit)] = NOW - timedelta(days=400)
+                continue
             fake.add(package.ecosystem, package.name, package.version)
     result = check([str(TESTDATA)], Policy(), lookups, now=NOW)
     assert result.count("unknown") == 0
@@ -400,3 +407,17 @@ def test_actions_are_dated_by_their_release(fake, lookups, tmp_path):
     # a moving tag is looked up again on each run, never taken from the cache
     assert lookups.cache.get(Package("actions", "actions/checkout", "v7")) is None
     assert lookups.cache.get(Package("actions", "actions/checkout", old)) == NOW - timedelta(days=90)
+
+
+def test_a_publish_time_in_the_future_is_unknown(fake):
+    from unripe.registries import Cache, Registries
+
+    live = Registries(Cache(None))
+    fake.add("npm", "clock", "1.0.0", timedelta(hours=-5))
+    fake.add("npm", "clock", "1.0.1", timedelta(minutes=-30))
+    finding = judge(Package("npm", "clock", "1.0.0"), Policy(), live, NOW)
+    assert finding.state == "unknown" and finding.reason == "the npm registry dates it 2026-10-20 17:00 UTC, which is in the future"
+    # a few minutes of clock skew is only too new
+    assert judge(Package("npm", "clock", "1.0.1"), Policy(), live, NOW).state == "unripe"
+    # checking as of a past moment, a later version is simply too new then
+    assert judge(Package("npm", "clock", "1.0.0"), Policy(), Registries(Cache(None), now=NOW), NOW).state == "unripe"

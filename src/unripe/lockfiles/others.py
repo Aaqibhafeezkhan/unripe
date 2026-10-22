@@ -1,4 +1,4 @@
-"""Cargo.lock, go.mod, composer.lock and Gemfile.lock."""
+"""Cargo.lock, go.mod, composer.lock, Gemfile.lock and conan.lock."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from unripe.model import Package
 
 CRATES = ("registry+https://github.com/rust-lang/crates.io-index", "sparse+https://index.crates.io/")
+# name/version, then @user/channel, #recipe-revision and %timestamp, each optional
+CONANREF = re.compile(r"^([a-z0-9_][a-z0-9_+.-]*)/([^@#%\s]+)(?:@([^#%\s]+))?(?:#([0-9a-f]+))?(?:%[0-9.]+)?$")
 
 
 def cargo(text: str, lockfile: str) -> list[Package]:
@@ -124,3 +126,30 @@ def gemfile(text: str, lockfile: str) -> list[Package]:
             if match and remote and "rubygems.org" in remote:
                 found.append(Package("rubygems", match.group(1), match.group(2), lockfile))
     return found
+
+
+def conan(text: str, lockfile: str) -> list[Package]:
+    """
+    conan.lock, from Conan 2 (lists of references) or Conan 1 (a graph of
+    nodes). The version keeps its recipe revision, since a new revision of an
+    old version is new code. References with a user and channel are not on
+    ConanCenter and are skipped.
+    """
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("not a conan lockfile")
+    references: list[str] = []
+    for section in ("requires", "build_requires", "python_requires"):
+        references += [str(entry) for entry in data.get(section) or []]
+    for node in ((data.get("graph_lock") or {}).get("nodes") or {}).values():
+        if isinstance(node, dict) and node.get("ref"):
+            references.append(str(node["ref"]))
+    found: dict[tuple[str, str, str], Package] = {}
+    for reference in references:
+        match = CONANREF.match(reference.strip())
+        if not match or match.group(3) not in (None, "_/_"):
+            continue
+        name, version, revision = match.group(1), match.group(2), match.group(4)
+        package = Package("conan", name, f"{version}#{revision}" if revision else version, lockfile)
+        found.setdefault(package.key, package)
+    return list(found.values())

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 # the registries unripe can ask for a publish time
-ECOSYSTEMS = ("npm", "pypi", "cargo", "go", "composer", "rubygems", "nuget", "maven", "jsr", "actions")
+ECOSYSTEMS = ("npm", "pypi", "cargo", "go", "composer", "rubygems", "nuget", "maven", "jsr", "actions", "pub", "cocoapods", "swift", "terraform", "conan")
 REGISTRY = {
     "npm": "the npm registry",
     "pypi": "PyPI",
@@ -18,6 +18,11 @@ REGISTRY = {
     "maven": "the Maven repositories (add more with maven-repositories)",
     "jsr": "jsr.io",
     "actions": "GitHub",
+    "pub": "pub.dev",
+    "cocoapods": "the CocoaPods trunk",
+    "swift": "GitHub",
+    "terraform": "the Terraform registry",
+    "conan": "ConanCenter",
 }
 STATES = ("unripe", "unknown", "allowed", "ok", "excluded")
 
@@ -65,6 +70,8 @@ class Finding:
     minimum: timedelta | None = None
     # for a version that is too new: the newest version in the same line that is old enough, and when it was published
     instead: tuple[str, datetime] | None = None
+    # "commit" when the time is a commit's, which its author sets, rather than a registry's
+    basis: str = ""
 
     @property
     def ripe(self) -> datetime | None:

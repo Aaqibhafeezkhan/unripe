@@ -1,0 +1,50 @@
+{
+  "originHash" : "aee58651e5dc9820a40e70830abc3a55148f88c2a93e3e431834ee554a05fd3d",
+  "pins" : [
+    {
+      "identity" : "pathkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/kylef/PathKit.git",
+      "state" : {
+        "revision" : "3bfd2737b700b9a36565a8c94f4ad2b050a5e574",
+        "version" : "1.0.1"
+      }
+    },
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser",
+      "state" : {
+        "revision" : "c5d11a805e765f52ba34ec7284bd4fcd6ba68615",
+        "version" : "1.7.0"
+      }
+    },
+    {
+      "identity" : "nightly",
+      "kind" : "remoteSourceControl",
+      "location" : "git@github.com:example/nightly.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "0123456789abcdef0123456789abcdef01234567"
+      }
+    },
+    {
+      "identity" : "internal",
+      "kind" : "remoteSourceControl",
+      "location" : "https://git.mycorp.example/ios/internal.git",
+      "state" : {
+        "revision" : "1111111111111111111111111111111111111111",
+        "version" : "2.0.0"
+      }
+    },
+    {
+      "identity" : "localpackage",
+      "kind" : "localSourceControl",
+      "location" : "/Users/me/LocalPackage",
+      "state" : {
+        "revision" : "2222222222222222222222222222222222222222"
+      }
+    }
+  ],
+  "version" : 3
+}

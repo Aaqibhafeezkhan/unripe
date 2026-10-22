@@ -154,6 +154,37 @@ class FakeRegistry:
                 if ("jsr", name, version) in self.yanked:
                     versions[version]["yanked"] = True
             return {"scope": name[1:].split("/")[0], "name": name.split("/")[1], "versions": versions}
+        if parsed.netloc == "pub.dev":
+            name = re.fullmatch(r"/api/packages/([^/]+)", path).group(1)
+            versions = []
+            for version, moment in self.versions("pub", name).items():
+                entry = {"version": version, "published": moment.strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
+                if ("pub", name, version) in self.yanked:
+                    entry["retracted"] = True
+                versions.append(entry)
+            return {"name": name, "versions": versions}
+        if parsed.netloc == "trunk.cocoapods.org":
+            name = re.fullmatch(r"/api/v1/pods/([^/]+)", path).group(1)
+            versions = [{"name": version, "created_at": moment.strftime("%Y-%m-%d %H:%M:%S UTC")} for version, moment in self.versions("cocoapods", name).items()]
+            return {"versions": versions, "owners": []}
+        if parsed.netloc == "center2.conan.io":
+            name, version, ask = re.fullmatch(r"/v2/conans/([^/]+)/([^/]+)/_/_/(revisions|latest)", path).groups()
+            revisions = sorted(
+                ({"revision": key.partition("#")[2] or "0" * 32, "time": moment.strftime("%Y-%m-%dT%H:%M:%S.000+0000")} for key, moment in self.versions("conan", name).items() if key.partition("#")[0] == version),
+                key=lambda entry: entry["time"],
+                reverse=True,
+            )
+            if not revisions:
+                raise Missing(url)
+            return revisions[0] if ask == "latest" else {"reference": f"{name}/{version}@_/_", "revisions": revisions}
+        if parsed.netloc == "registry.terraform.io":
+            name = re.fullmatch(r"/v2/providers/([^/]+/[^/]+)", path).group(1)
+            assert urllib.parse.parse_qs(parsed.query) == {"include": ["provider-versions"]}
+            included = [
+                {"type": "provider-versions", "id": str(number), "attributes": {"version": version, "published-at": moment.strftime("%Y-%m-%dT%H:%M:%SZ")}}
+                for number, (version, moment) in enumerate(self.versions("terraform", name).items())
+            ]
+            return {"data": {"type": "providers", "attributes": {"full-name": name}}, "included": included}
         if parsed.netloc == "api.jsr.io":
             scope, name, version = re.fullmatch(r"/scopes/([^/]+)/packages/([^/]+)/versions/([^/]+)", path).groups()
             moment = self.versions("jsr", f"@{scope}/{name}").get(version)

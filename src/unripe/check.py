@@ -122,6 +122,10 @@ class Git:
         return done.stdout.decode("utf-8-sig", errors="replace")
 
 
+# how far ahead of now a publish time may be before it is treated as wrong
+FUTURE = timedelta(hours=1)
+
+
 def judge(
     package: Package,
     policy: Policy,
@@ -147,8 +151,13 @@ def judge(
         finding = Finding(package, "unknown", reason=f"{registry} gave an answer unripe could not use ({error})", locations=where, minimum=minimum)
     else:
         age = (now - published).total_seconds()
-        state = "ok" if age >= minimum.total_seconds() else "unripe"
-        finding = Finding(package, state, published, age, locations=where, minimum=minimum)
+        if age < -FUTURE.total_seconds() and not registries.replaying:
+            # a clock does not run that far ahead: the date is wrong, so the age is unknown
+            reason = f"{registry} dates it {published.strftime('%Y-%m-%d %H:%M UTC')}, which is in the future"
+            finding = Finding(package, "unknown", reason=reason, locations=where, minimum=minimum)
+        else:
+            state = "ok" if age >= minimum.total_seconds() else "unripe"
+            finding = Finding(package, state, published, age, locations=where, minimum=minimum, basis=registries.basis(package))
     if finding.state == "ok":
         return finding
 
@@ -184,7 +193,8 @@ def instead(finding: Finding, registries: Registries, now: datetime) -> tuple[st
     """
     For a version that is too new: the newest version in the same release line
     (same major, or same minor under 1.0) that is old enough and was not
-    yanked, unpublished or deprecated. Only from registries that list every version.
+    yanked or unpublished, preferring ones that are not deprecated. Only from
+    registries that list every version.
     """
     package, minimum = finding.package, finding.minimum or timedelta(0)
     try:
@@ -192,6 +202,7 @@ def instead(finding: Finding, registries: Registries, now: datetime) -> tuple[st
     except (Missing, Unreachable, KeyError, ValueError, TypeError, AttributeError):
         return None
     pulled = registries.pulled.get((package.ecosystem, package.name), set())
+    deprecated = registries.deprecated.get((package.ecosystem, package.name), set())
     locked = numbers(package.version)
     if not locked:
         return None
@@ -206,10 +217,38 @@ def instead(finding: Finding, registries: Registries, now: datetime) -> tuple[st
             continue
         if (not loose and prerelease(package.ecosystem, version)) or numbers(version)[: len(line)] != line:
             continue
-        key = (numbers(version), published)
+        key = (version not in deprecated, numbers(version), published)
         if best is None or key > best[0]:
             best = (key, version, published)
     return (best[1], best[2]) if best else None
+
+
+@dataclass
+class Releases:
+    """A package's recent releases, for `unripe explain` without a version and for agents choosing a version."""
+
+    total: int
+    minimum: timedelta
+    shown: list[tuple[str, datetime]]
+    pulled: set[str]
+    deprecated: set[str]
+    prereleases: int
+    # the newest release that is old enough and was not pulled, preferring one that is not deprecated
+    newest: tuple[str, datetime] | None
+
+
+def releases(registries: Registries, ecosystem: str, name: str, minimum: timedelta, now: datetime, count: int = 10) -> Releases:
+    """Raises Missing when the package is unknown or the registry cannot list versions, Unreachable when it does not answer."""
+    times = registries.versions(ecosystem, name)
+    pulled = registries.pulled.get((ecosystem, name), set())
+    deprecated = registries.deprecated.get((ecosystem, name), set())
+    ordered = sorted(times.items(), key=lambda item: item[1], reverse=True)
+    stable = [(version, published) for version, published in ordered if not prerelease(ecosystem, version)]
+    ready = [(version, published) for version, published in stable if published <= now - minimum and version not in pulled]
+    newest = max(ready, key=lambda item: (item[0] not in deprecated, numbers(item[0]), item[1])) if ready else None
+    # prereleases and nightlies drown out releases on some packages; show them only when there is nothing else
+    shown = (stable or ordered)[:count]
+    return Releases(len(times), minimum, shown, pulled, deprecated, len(ordered) - len(stable) if stable else 0, newest)
 
 
 def notes(findings: list[Finding], policy: Policy, now: datetime, since: str | None) -> list[str]:

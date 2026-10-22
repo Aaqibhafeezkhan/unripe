@@ -4,12 +4,19 @@
 [![CI](https://github.com/TexWoW/unripe/actions/workflows/ci.yml/badge.svg)](https://github.com/TexWoW/unripe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
+<!-- mcp-name: io.github.TexWoW/unripe -->
+
 unripe checks your lockfiles and fails if any dependency version was
 published too recently. The default is 3 days. It works across npm, pnpm,
-yarn, bun, Deno, PyPI, Cargo, Go, Composer, RubyGems, NuGet and Gradle, and
-it can check the actions your GitHub workflows use too. A repo with a Python
-backend and a JavaScript frontend gets one check and one policy instead of
-five different settings.
+yarn, bun, Deno, PyPI, Cargo, Go, Composer, RubyGems, NuGet, Gradle, Dart and
+Flutter, CocoaPods, Swift, Terraform and Conan, and it can check the actions
+your GitHub workflows use too. A repo with a Python backend, a JavaScript
+frontend and a Flutter app gets one check and one policy instead of a
+different setting in every tool.
+
+It runs in CI, as a pre-commit hook, from Python, and as an
+[MCP server](docs/agents.md) so AI coding agents check a version's age
+before they add it.
 
 Here it is on a small test project with Deno, Python and PHP parts, the
 evening of October 21, 2026. `uv add` had just locked a certifi released two
@@ -71,10 +78,15 @@ malicious versions down, so a lockfile that still has one fails either way.
 
 Most package managers have added a setting for this in the last year, and
 if yours has one you should turn it on. unripe is for what those settings
-don't do. It checks what is already in the lockfile, including whatever a bot
-or an old tool put there. It reports on just the versions a pull request
-adds. It applies one policy to every ecosystem in the repo. And it covers Go,
-Composer, NuGet, Gradle and GitHub Actions, which don't have a setting yet.
+don't do. It checks what is already in the lockfile, including whatever a bot,
+an agent or an old tool put there. It reports on just the versions a pull
+request adds. It applies one policy to every ecosystem in the repo. And it
+covers Go, Composer, NuGet, Gradle, Dart, CocoaPods, Swift, Terraform, Conan
+and GitHub Actions, which don't have a setting yet.
+
+[docs/case-studies.md](docs/case-studies.md) replays more incidents the same
+way, and [docs/threat-model.md](docs/threat-model.md) says plainly what a
+cooldown does not protect against.
 
 ## Install
 
@@ -90,6 +102,74 @@ GitHub workflow in one go:
 
 ```
 unripe init --github
+```
+
+`unripe doctor` checks the setup: which config and lockfiles it finds,
+whether each lockfile reads, and whether each registry they use answers.
+
+## Examples
+
+Check everything under the current directory:
+
+```
+unripe
+```
+
+Only the versions a branch adds, the way a pull request check does:
+
+```
+unripe check --since origin/main
+```
+
+Pick a version before adding it. Without a version, `explain` lists recent
+releases and marks the newest one that is old enough:
+
+```
+$ unripe explain pypi certifi
+pypi certifi: 77 versions, minimum age 3d
+  2026.10.19  2026-10-20 02:24 UTC    2d 8h ago  too new, old enough at 2026-10-23 02:24 UTC
+  2026.10.18  2026-10-18 16:21 UTC   3d 19h ago  old enough  <- newest old enough
+  2026.7.22   2026-07-22 03:35 UTC      13w ago  old enough
+  ...
+```
+
+A stricter rule for one ecosystem and a looser one for type packages, in
+`.unripe.toml`:
+
+```toml
+min-age = "3d"
+
+[min-age-for]
+npm = "7d"
+"npm:@types/*" = "1d"
+```
+
+Your own packages are always new; skip them:
+
+```
+unripe check --exclude "npm:@myorg/*"
+```
+
+A version you need now, let through until a date, with the reason in the
+report:
+
+```toml
+[[allow]]
+package = "npm:axios@1.13.2"
+reason = "fixes the redirect bug we hit in production"
+until = 2026-11-15
+```
+
+Results for a script:
+
+```
+unripe check --format json | jq -r '.findings[] | select(.state == "unripe") | "\(.name) \(.version)"'
+```
+
+Quiet unless something is wrong, for a git hook or a cron job:
+
+```
+unripe check --quiet
 ```
 
 ## Lockfiles it reads
@@ -111,6 +191,11 @@ unripe init --github
 | `Gemfile.lock` | rubygems.org |
 | `packages.lock.json` | nuget.org |
 | `gradle.lockfile`, `gradle/dependency-locks/*.lockfile` | Maven Central, Google's Maven repository, the Gradle plugin portal |
+| `pubspec.lock` (Dart and Flutter) | pub.dev |
+| `Podfile.lock` | the CocoaPods trunk |
+| `Package.resolved` (Swift) | GitHub releases, for packages on GitHub |
+| `.terraform.lock.hcl` | the Terraform registry |
+| `conan.lock` (Conan 1 and 2) | ConanCenter, by recipe revision |
 | `.github/workflows/*.yml`, `action.yml` (with `--workflows`) | GitHub releases |
 
 Dependencies from git, a local path, a workspace or another registry are
@@ -126,6 +211,12 @@ repository (Confluent's, say) can be found by adding it to
 For Go it reads `go.mod`, not `go.sum`. Since Go 1.17, `go.mod` lists every
 module in the build, while `go.sum` also remembers versions that aren't used.
 
+Swift packages are dated like GitHub Actions, below, so only packages hosted
+on GitHub are checked. Terraform providers from other registries, including
+OpenTofu's, are skipped. A Conan version is dated by the recipe revision the
+lockfile pins, since a new revision of an old version is new code; recipes
+with a user and channel aren't on ConanCenter and are skipped.
+
 ### GitHub Actions
 
 With `--workflows` (or `workflows = true` in the config), unripe also reads
@@ -136,6 +227,10 @@ when that commit was released. A commit with no release falls back to its
 commit time. An action used at a branch, like `@main`, has no release to go
 by, so it comes back unknown. Set `GITHUB_TOKEN` to get past GitHub's limit
 of 60 requests an hour; in the Action it is set for you.
+
+A commit time is whatever the commit's author says it is, so a version that
+passes on one is marked: `by its commit time` in the text report and
+`"dated_by": "commit"` in JSON.
 
 ## In GitHub Actions
 
@@ -152,7 +247,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: TexWoW/unripe@v0.5.1
+      - uses: TexWoW/unripe@v0.6.0
         with:
           min-age: 3d
           comment: true
@@ -200,7 +295,7 @@ If you want the results as code scanning alerts, write SARIF and upload it
 (this needs `security-events: write`):
 
 ```yaml
-      - uses: TexWoW/unripe@v0.5.1
+      - uses: TexWoW/unripe@v0.6.0
         with:
           sarif: unripe.sarif
       - uses: github/codeql-action/upload-sarif@v4
@@ -214,7 +309,7 @@ If you want the results as code scanning alerts, write SARIF and upload it
 ```yaml
 repos:
   - repo: https://github.com/TexWoW/unripe
-    rev: v0.5.1
+    rev: v0.6.0
     hooks:
       - id: unripe
 ```
@@ -226,7 +321,7 @@ you only want it to look at what the commit adds.
 
 ```yaml
 include:
-  - remote: https://raw.githubusercontent.com/TexWoW/unripe/v0.5.1/ci/gitlab.yml
+  - remote: https://raw.githubusercontent.com/TexWoW/unripe/v0.6.0/ci/gitlab.yml
 ```
 
 That adds an `unripe` job to the `test` stage. On merge requests it checks
@@ -236,9 +331,26 @@ test report, and the markdown report is kept as a job artifact. Set
 `UNRIPE_MIN_AGE` or `UNRIPE_ARGS` (for example `--exclude npm:@myorg/*`) in
 your own `variables:` to change it.
 
-Elsewhere, `--format junit` works with Jenkins, Azure Pipelines and CircleCI,
-and `--report FORMAT:FILE` writes any format to a file next to the normal
-output.
+## In other CI systems
+
+[docs/ci.md](docs/ci.md) has pipelines for Azure Pipelines, Jenkins,
+CircleCI and Bitbucket. `--format junit` works with all of them, and
+`--report FORMAT:FILE` writes any format to a file next to the normal
+output. [docs/bots.md](docs/bots.md) covers Renovate and Dependabot: set
+their cooldowns too, so they stop opening pull requests unripe would fail.
+
+## With AI coding agents
+
+```bash
+claude mcp add unripe -- uvx unripe@0.6.0 mcp
+```
+
+`unripe mcp` is a Model Context Protocol server with three read-only tools:
+`check_package` (how old a version is, or the newest version that is old
+enough), `check_lockfiles` and `cooldown_settings`. It works with Claude
+Code, Codex, Copilot in VS Code, Cursor, Claude Desktop, Windsurf and Gemini
+CLI; [docs/agents.md](docs/agents.md) has the setup for each, and a line to
+put in `AGENTS.md` so the agent uses it before adding a dependency.
 
 ## Configuration
 
@@ -278,7 +390,8 @@ until = 2026-11-15
 
 An exclude is a package name or a glob. Prefix it with an ecosystem
 (`npm:`, `pypi:`, `cargo:`, `go:`, `composer:`, `rubygems:`, `nuget:`,
-`maven:`, `jsr:`, `actions:`) to limit it to one, and add `@version` to limit
+`maven:`, `jsr:`, `actions:`, `pub:`, `cocoapods:`, `swift:`, `terraform:`,
+`conan:`) to limit it to one, and add `@version` to limit
 it to certain versions, like `@types/node@20.*`. Gradle packages are named
 `group:artifact`, like `maven:com.mycorp:*`. PyPI names are normalised the
 way PyPI does it, so `Typing_Extensions` and `typing-extensions` are the same
@@ -331,15 +444,19 @@ unripe check [paths...]
   --config FILE
   --no-cache
   --verbose                 list the versions that passed too, and the timing
+  --quiet                   print nothing when the check passes
 
 unripe explain ECOSYSTEM NAME [VERSION]
 unripe config
-unripe init [--github]
+unripe doctor [paths...]
+unripe init [--github] [--dry-run]
+unripe mcp
 ```
 
 `unripe` with no command runs `unripe check`. It exits 0 when everything is
 old enough, 1 when something is too new or has an unknown age, and 2 when a
-lockfile can't be read, no lockfile was found, or an option is wrong.
+lockfile can't be read, no lockfile was found, or an option is wrong. The
+JSON report's fields are described in [docs/json.md](docs/json.md).
 
 `explain` answers a single question:
 
@@ -369,10 +486,14 @@ is unreachable is one an attacker can turn off. Use `--unknown warn` if you'd
 rather not. A version that npm has unpublished counts as unknown too, since
 that's how npm takes malicious versions down.
 
+A publish time more than an hour in the future is not a real one, so that
+version counts as unknown too.
+
 When a version is too new, unripe looks for the newest version in the same
 release line (same major version, or same minor below 1.0) that is old
-enough, skipping prereleases and anything yanked, unpublished or deprecated.
-It does this for npm, PyPI, Cargo, Composer, RubyGems, NuGet and JSR.
+enough, skipping prereleases and anything yanked or unpublished, and
+preferring versions that aren't deprecated. It does this for npm, PyPI,
+Cargo, Composer, RubyGems, NuGet, JSR, pub.dev, CocoaPods and Terraform.
 
 Publish times never change, so answers are cached on disk forever, in
 `~/.cache/unripe` (`%LOCALAPPDATA%\unripe\cache` on Windows), or wherever
@@ -381,8 +502,8 @@ apart from finding older versions for anything that is too new, and
 `--offline` makes none at all. Each version is looked up once even if
 several lockfiles have it, lookups run 16 at a time, and each keeps its
 connection to a registry open between requests. For npm,
-Cargo, Composer, RubyGems and JSR one request covers every version of a
-package. GitHub Action tags like `v7` move, so those are looked up every run.
+Cargo, Composer, RubyGems, JSR, pub.dev, CocoaPods and Terraform one request
+covers every version of a package. GitHub Action tags like `v7` move, so those are looked up every run.
 
 NuGet and Maven needed care too. nuget.org reports an unlisted version as
 published in 1900, so unripe reads its real time from the NuGet catalog
@@ -391,12 +512,13 @@ years old. Maven repositories never change a published file, so a POM's
 `Last-Modified` header is when the version was published, and it's there
 the moment the file is, before the search index catches up.
 
-Mirrors work through `UNRIPE_NPM_REGISTRY` and `UNRIPE_PYPI_URL`, and
+Mirrors work through `UNRIPE_NPM_REGISTRY`, `UNRIPE_PYPI_URL` and
+`UNRIPE_CONAN_REMOTE` (any server with Conan's v2 API), and
 `UNRIPE_MAVEN_REPOS` (comma separated) adds Maven repositories the same way
 `maven-repositories` does. For Go, unripe uses the first proxy in `GOPROXY`.
 Behind a corporate proxy, `HTTPS_PROXY` and `NO_PROXY` work as usual, and a
 company CA bundle can be given with `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE` or
-`UNRIPE_CA_BUNDLE`.
+`UNRIPE_CA_BUNDLE`. A certificate error says so, rather than being retried.
 
 Go needed extra work. The module proxy only reports a version's commit
 time, and a commit time is whatever the author says it is, so a tag pushed
@@ -435,6 +557,7 @@ As of October 2026:
 | Cargo | `registry.global-min-publish-age`, unstable now, expected stable in Rust 1.100 |
 | Composer | proposed |
 | Go, NuGet, Maven, Gradle, GitHub Actions | nothing yet |
+| Dart, CocoaPods, Swift, Terraform, Conan | nothing we know of |
 
 These stop a new version at install time, which unripe can't do, so use
 them where you can; `unripe config` prints the lines for your repo. unripe
@@ -483,6 +606,17 @@ or `--exit-zero` on the command line. Everything is still reported.
 **Is it slow?** Not very. Discourse's `Gemfile.lock`, Cargo's `Cargo.lock`
 and Vite's `pnpm-lock.yaml`, 2,048 versions between them, took 7 seconds
 with nothing cached and a third of a second after that.
+
+## More
+
+- [docs/agents.md](docs/agents.md): AI coding agents and MCP
+- [docs/ci.md](docs/ci.md): Azure Pipelines, Jenkins, CircleCI, Bitbucket
+- [docs/bots.md](docs/bots.md): Renovate and Dependabot
+- [docs/case-studies.md](docs/case-studies.md): past attacks, replayed with `--as-of`
+- [docs/threat-model.md](docs/threat-model.md): what it protects against, and what it doesn't
+- [docs/json.md](docs/json.md): the JSON report
+- [docs/go.md](docs/go.md): how Go versions are dated
+- [ROADMAP.md](ROADMAP.md): what's next, and what isn't planned
 
 ## Contributing
 

@@ -1,0 +1,46 @@
+PODS:
+  - CocoaLumberjack (3.7.4):
+    - CocoaLumberjack/Core (= 3.7.4)
+  - CocoaLumberjack/Core (3.7.4)
+  - GRDB.swift (5.26.0):
+    - GRDB.swift/standard (= 5.26.0)
+  - GRDB.swift/standard (5.26.0)
+  - LibSignalClient (0.86.6)
+  - Logging (1.4.0)
+  - PrivateKit (2.0.0)
+  - SwiftProtobuf (1.38.1)
+
+DEPENDENCIES:
+  - CocoaLumberjack
+  - GRDB.swift
+  - LibSignalClient (from `https://github.com/signalapp/libsignal.git`, tag `v0.86.6`)
+  - Logging
+  - PrivateKit
+  - SwiftProtobuf
+
+SPEC REPOS:
+  https://github.com/mycorp/Specs.git:
+    - PrivateKit
+  trunk:
+    - CocoaLumberjack
+    - GRDB.swift
+    - Logging
+    - SwiftProtobuf
+
+EXTERNAL SOURCES:
+  LibSignalClient:
+    :git: https://github.com/signalapp/libsignal.git
+    :tag: v0.86.6
+
+CHECKOUT OPTIONS:
+  LibSignalClient:
+    :git: https://github.com/signalapp/libsignal.git
+    :tag: v0.86.6
+
+SPEC CHECKSUMS:
+  CocoaLumberjack: 543c79c114dadc3b1aba95641d8738b06b05b646
+  GRDB.swift: 1395cb3556df6b16ed69dfc74c3886abc75d2825
+
+PODFILE CHECKSUM: 0e2d4f1e1a8f4c9f1d2b6a7c3e5f8a9b0c1d2e3f
+
+COCOAPODS: 1.16.2
