@@ -4,7 +4,8 @@
 
 - Much faster with nothing cached. Each lookup thread keeps its connection
   to a registry open instead of starting a new one for every request:
-  2,048 versions across three big lockfiles went from 39 seconds to 7.
+  2,048 versions across three big lockfiles took 6 to 7 seconds, against
+  11 to 33 seconds before, depending on the network.
   Through a proxy, requests go the way they did before.
 - An npm version that was unpublished is now reported even when another
   lockfile in the same run had already fetched that package.
