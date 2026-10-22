@@ -105,6 +105,17 @@ def composer(text: str, lockfile: str) -> list[Package]:
     return found
 
 
+def mixlock(text: str, lockfile: str) -> list[Package]:
+    """Hex packages from mix.lock, excluding git and non-public Hex repositories."""
+    found = []
+    pattern = re.compile(r'^\s*"([^"]+)":\s*\{:hex,\s*:[^,]+,\s*"([^"]+)",.*?,\s*"hexpm",\s*"[^"]+"\s*\}')
+    for line in text.splitlines():
+        match = pattern.match(line)
+        if match:
+            found.append(Package("hex", match.group(1), match.group(2), lockfile))
+    return found
+
+
 def gemfile(text: str, lockfile: str) -> list[Package]:
     """Gems under a `GEM` section whose remote is rubygems.org. Platform suffixes are kept for the lookup."""
     found = []

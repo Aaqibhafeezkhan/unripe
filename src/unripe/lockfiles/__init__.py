@@ -27,6 +27,7 @@ PARSERS: dict[str, Parser] = {
     "go.mod": others.gomod,
     "composer.lock": others.composer,
     "Gemfile.lock": others.gemfile,
+    "mix.lock": others.mixlock,
     "packages.lock.json": dotnet.nuget,
     "gradle.lockfile": jvm.gradle,
     "buildscript-gradle.lockfile": jvm.gradle,

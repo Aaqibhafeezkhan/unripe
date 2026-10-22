@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add Elixir `mix.lock` parsing and Hex release publication times.
+
 ## 0.6.1 (2026-10-22)
 
 - The README names the MCP server the way the official MCP registry expects

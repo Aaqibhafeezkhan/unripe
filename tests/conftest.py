@@ -177,6 +177,15 @@ class FakeRegistry:
             if not revisions:
                 raise Missing(url)
             return revisions[0] if ask == "latest" else {"reference": f"{name}/{version}@_/_", "revisions": revisions}
+        if parsed.netloc == "hex.pm":
+            name = re.fullmatch(r"/api/packages/([^/]+)", path).group(1)
+            return {
+                "name": name,
+                "releases": [
+                    {"version": version, "inserted_at": iso(moment)}
+                    for version, moment in self.versions("hex", name).items()
+                ],
+            }
         if parsed.netloc == "registry.terraform.io":
             name = re.fullmatch(r"/v2/providers/([^/]+/[^/]+)", path).group(1)
             assert urllib.parse.parse_qs(parsed.query) == {"include": ["provider-versions"]}

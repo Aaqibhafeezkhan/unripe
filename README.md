@@ -9,7 +9,7 @@
 unripe checks your lockfiles and fails if any dependency version was
 published too recently. The default is 3 days. It works across npm, pnpm,
 yarn, bun, Deno, PyPI, Cargo, Go, Composer, RubyGems, NuGet, Gradle, Dart and
-Flutter, CocoaPods, Swift, Terraform and Conan, and it can check the actions
+Flutter, CocoaPods, Swift, Terraform, Conan and Elixir, and it can check the actions
 your GitHub workflows use too. A repo with a Python backend, a JavaScript
 frontend and a Flutter app gets one check and one policy instead of a
 different setting in every tool.
@@ -189,6 +189,7 @@ unripe check --quiet
 | `go.mod` | Go module proxy and checksum database |
 | `composer.lock` | the lockfile's own `time` field, else Packagist |
 | `Gemfile.lock` | rubygems.org |
+| `mix.lock` | Hex (hex.pm) |
 | `packages.lock.json` | nuget.org |
 | `gradle.lockfile`, `gradle/dependency-locks/*.lockfile` | Maven Central, Google's Maven repository, the Gradle plugin portal |
 | `pubspec.lock` (Dart and Flutter) | pub.dev |
