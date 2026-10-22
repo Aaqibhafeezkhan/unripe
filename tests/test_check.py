@@ -354,8 +354,13 @@ def test_an_unpublished_npm_version_is_unknown(fake, tmp_path):
     result = run([tmp_path], Registries(Cache(None)))
     assert states(result) == {("event-stream", "3.3.6"): "unknown"}
     assert "unpublished from the npm registry" in result.findings[0].reason
+    # also when another version of the package was looked up first
+    lock(tmp_path, ("event-stream", "3.3.5"), ("event-stream", "3.3.6"))
+    fake.add("npm", "event-stream", "3.3.5", timedelta(days=500))
+    for _ in range(5):
+        assert states(run([tmp_path], Registries(Cache(None))))[("event-stream", "3.3.6")] == "unknown"
     # checking as of a past moment, it was still up then, so its age decides
-    assert states(run([tmp_path], Registries(Cache(None), now=NOW))) == {("event-stream", "3.3.6"): "ok"}
+    assert states(run([tmp_path], Registries(Cache(None), now=NOW)))[("event-stream", "3.3.6")] == "ok"
 
 
 def test_deno_jsr_versions_are_dated_by_jsr(fake, lookups):

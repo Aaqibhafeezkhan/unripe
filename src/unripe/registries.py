@@ -13,6 +13,8 @@ from __future__ import annotations
 import email.utils
 import fnmatch
 import gzip
+import http.client
+import io
 import json
 import os
 import random
@@ -65,6 +67,95 @@ def tls() -> ssl.SSLContext | None:
     return ssl.create_default_context(cafile=bundle) if bundle else None
 
 
+# each thread keeps one open connection per host: a new TLS handshake for
+# every lookup made a cold run several times slower than it needs to be
+POOL = threading.local()
+DEFAULT: list[ssl.SSLContext] = []
+REDIRECTS = (301, 302, 303, 307, 308)
+# what a kept connection the server already closed looks like
+STALE = (http.client.RemoteDisconnected, http.client.CannotSendRequest, http.client.ResponseNotReady, ConnectionResetError, BrokenPipeError)
+
+
+def proxied(parts: urllib.parse.SplitResult) -> bool:
+    """Whether a proxy is set for this url, in which case urllib does the request as it always has."""
+    proxy = urllib.request.getproxies().get(parts.scheme)
+    return bool(proxy) and not urllib.request.proxy_bypass(parts.hostname or "")
+
+
+def connection(parts: urllib.parse.SplitResult, timeout: float, fresh: bool) -> http.client.HTTPConnection:
+    connections = POOL.__dict__.setdefault("connections", {})
+    key = (parts.scheme, parts.netloc)
+    if fresh and key in connections:
+        connections.pop(key).close()
+    if key not in connections:
+        if parts.scheme == "https":
+            context = tls()
+            if context is None:
+                if not DEFAULT:
+                    DEFAULT.append(ssl.create_default_context())
+                context = DEFAULT[0]
+            connections[key] = http.client.HTTPSConnection(parts.hostname, parts.port, timeout=timeout, context=context)
+        else:
+            connections[key] = http.client.HTTPConnection(parts.hostname, parts.port, timeout=timeout)
+    return connections[key]
+
+
+def exchange(parts: urllib.parse.SplitResult, method: str, headers: dict[str, str], data: bytes | None, timeout: float) -> http.client.HTTPResponse:
+    """One request on this thread's connection to the host, opening a new one if the kept one was closed."""
+    target = parts.path or "/"
+    if parts.query:
+        target += f"?{parts.query}"
+    for fresh in (False, True):
+        kept = not fresh and (parts.scheme, parts.netloc) in POOL.__dict__.get("connections", {})
+        conn = connection(parts, timeout, fresh)
+        try:
+            conn.request(method, target, body=data, headers=headers)
+            return conn.getresponse()
+        except STALE:
+            POOL.connections.pop((parts.scheme, parts.netloc), None)
+            conn.close()
+            if not kept:
+                raise
+        except Exception:
+            POOL.connections.pop((parts.scheme, parts.netloc), None)
+            conn.close()
+            raise
+    raise http.client.CannotSendRequest(parts.netloc)
+
+
+def send(request: urllib.request.Request, timeout: float):
+    """
+    Open a request like urlopen does, raising HTTPError for an error status,
+    but on a kept connection, following redirects itself. Through a proxy it
+    is urlopen.
+    """
+    url, method, data = request.full_url, request.get_method(), request.data
+    headers = dict(request.header_items())
+    for _ in range(6):
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("http", "https") or proxied(parts):
+            context = tls()
+            request = urllib.request.Request(url, data=data, headers=headers, method=method)
+            return urllib.request.urlopen(request, timeout=timeout, context=context) if context else urllib.request.urlopen(request, timeout=timeout)
+        response = exchange(parts, method, headers, data, timeout)
+        location = response.getheader("Location")
+        if response.status in REDIRECTS and location:
+            response.read()
+            moved = urllib.parse.urljoin(url, location)
+            if urllib.parse.urlsplit(moved).netloc != parts.netloc:
+                # a token for one host never follows a redirect to another
+                headers.pop("Authorization", None)
+            if response.status == 303 or (response.status in (301, 302) and method == "POST"):
+                method, data = "GET", None
+                headers.pop("Content-type", None)
+            url = moved
+            continue
+        if response.status >= 400:
+            raise urllib.error.HTTPError(url, response.status, response.reason, response.headers, io.BytesIO(response.read()))
+        return response
+    raise urllib.error.URLError(f"too many redirects from {request.full_url}")
+
+
 def ask(url: str, accept: str = "*/*", method: str = "GET", body: bytes | None = None) -> tuple[dict[str, str], bytes]:
     """
     One request, retrying the failures worth retrying, as the response headers
@@ -84,9 +175,7 @@ def ask(url: str, accept: str = "*/*", method: str = "GET", body: bytes | None =
         with COUNTING:
             REQUESTS[0] += 1
         try:
-            context = tls()
-            opened = urllib.request.urlopen(request, timeout=TIMEOUT, context=context) if context else urllib.request.urlopen(request, timeout=TIMEOUT)
-            with opened as response:
+            with send(request, TIMEOUT) as response:
                 found = {name.lower(): value for name, value in response.headers.items()}
                 body = response.read()
                 if found.get("content-encoding") == "gzip" and body:
@@ -104,7 +193,7 @@ def ask(url: str, accept: str = "*/*", method: str = "GET", body: bytes | None =
             retry = error.headers.get("Retry-After")
             if retry and retry.isdigit():
                 delay = max(delay, min(float(retry), 60.0))
-        except (urllib.error.URLError, TimeoutError, OSError, EOFError, gzip.BadGzipFile, ssl.SSLError) as error:
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError, EOFError, gzip.BadGzipFile, ssl.SSLError) as error:
             last = str(getattr(error, "reason", error))
         if attempt < TRIES - 1:
             time.sleep(delay + random.random() * 0.5)
@@ -509,7 +598,9 @@ class Registries:
             if key not in self.documents:
                 self.documents[key] = fetchall() if fetchall else self.listings[package.ecosystem](package.name)
                 for version, stamp in self.documents[key].items():
-                    self.cache.learn(package.ecosystem, package.name, version, stamp)
+                    # an unpublished npm version has to come back through npm() to be reported
+                    if (package.name, version) not in self.gone:
+                        self.cache.learn(package.ecosystem, package.name, version, stamp)
             times = self.documents[key]
             if package.version not in times:
                 raise Missing(f"{package} is not in the registry")

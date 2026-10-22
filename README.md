@@ -152,7 +152,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: TexWoW/unripe@v0.5.0
+      - uses: TexWoW/unripe@v0.5.1
         with:
           min-age: 3d
           comment: true
@@ -200,7 +200,7 @@ If you want the results as code scanning alerts, write SARIF and upload it
 (this needs `security-events: write`):
 
 ```yaml
-      - uses: TexWoW/unripe@v0.5.0
+      - uses: TexWoW/unripe@v0.5.1
         with:
           sarif: unripe.sarif
       - uses: github/codeql-action/upload-sarif@v4
@@ -214,7 +214,7 @@ If you want the results as code scanning alerts, write SARIF and upload it
 ```yaml
 repos:
   - repo: https://github.com/TexWoW/unripe
-    rev: v0.5.0
+    rev: v0.5.1
     hooks:
       - id: unripe
 ```
@@ -226,7 +226,7 @@ you only want it to look at what the commit adds.
 
 ```yaml
 include:
-  - remote: https://raw.githubusercontent.com/TexWoW/unripe/v0.5.0/ci/gitlab.yml
+  - remote: https://raw.githubusercontent.com/TexWoW/unripe/v0.5.1/ci/gitlab.yml
 ```
 
 That adds an `unripe` job to the `test` stage. On merge requests it checks
@@ -376,9 +376,11 @@ It does this for npm, PyPI, Cargo, Composer, RubyGems, NuGet and JSR.
 
 Publish times never change, so answers are cached on disk forever, in
 `~/.cache/unripe` (`%LOCALAPPDATA%\unripe\cache` on Windows), or wherever
-`UNRIPE_CACHE` points. A second run on the same lockfiles makes no requests
-at all, and `--offline` makes sure of it. Each version is looked up once
-even if several lockfiles have it, and lookups run 16 at a time. For npm,
+`UNRIPE_CACHE` points. A second run on the same lockfiles makes no requests,
+apart from finding older versions for anything that is too new, and
+`--offline` makes none at all. Each version is looked up once even if
+several lockfiles have it, lookups run 16 at a time, and each keeps its
+connection to a registry open between requests. For npm,
 Cargo, Composer, RubyGems and JSR one request covers every version of a
 package. GitHub Action tags like `v7` move, so those are looked up every run.
 
@@ -478,9 +480,9 @@ different things, so run both.
 **Can we try it without breaking builds?** Use `fail: false` in the Action,
 or `--exit-zero` on the command line. Everything is still reported.
 
-**Is it slow?** The first run on a big repo takes a while. Twenty real
-lockfiles with about 7,800 versions between them took 82 seconds cold and
-1 second after that.
+**Is it slow?** Not very. Discourse's `Gemfile.lock`, Cargo's `Cargo.lock`
+and Vite's `pnpm-lock.yaml`, 2,048 versions between them, took 7 seconds
+with nothing cached and a third of a second after that.
 
 ## Contributing
 

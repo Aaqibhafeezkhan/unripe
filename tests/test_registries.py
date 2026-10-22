@@ -180,7 +180,7 @@ def test_fetch_retries_server_errors_then_answers(monkeypatch):
         assert request.get_header("User-agent").startswith("unripe/")
         return Response(b'{"ok": true}')
 
-    monkeypatch.setattr(registries.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(registries, "send", urlopen)
     monkeypatch.setattr(registries.time, "sleep", lambda seconds: None)
     assert registries.fetch("https://example.com/x") == {"ok": True}
     assert len(calls) == 3
@@ -190,7 +190,7 @@ def test_fetch_gives_up_as_unreachable(monkeypatch):
     def urlopen(request, timeout):
         raise urllib.error.URLError("no route")
 
-    monkeypatch.setattr(registries.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(registries, "send", urlopen)
     monkeypatch.setattr(registries.time, "sleep", lambda seconds: None)
     with pytest.raises(Unreachable, match="no route"):
         registries.fetch("https://example.com/x")
@@ -203,14 +203,14 @@ def test_fetch_404_is_missing_without_retrying(monkeypatch):
         calls.append(1)
         raise urllib.error.HTTPError(request.full_url, 404, "not found", {}, None)
 
-    monkeypatch.setattr(registries.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(registries, "send", urlopen)
     with pytest.raises(Missing):
         registries.fetch("https://example.com/x")
     assert calls == [1]
 
 
 def test_fetch_non_json_is_unreachable(monkeypatch):
-    monkeypatch.setattr(registries.urllib.request, "urlopen", lambda request, timeout: Response(b"<html>"))
+    monkeypatch.setattr(registries, "send", lambda request, timeout: Response(b"<html>"))
     with pytest.raises(Unreachable, match="not JSON"):
         registries.fetch("https://example.com/x")
 
@@ -330,7 +330,7 @@ def test_fetch_undoes_gzip(monkeypatch):
     import gzip
 
     body = gzip.compress(b'{"zipped": true}')
-    monkeypatch.setattr(registries.urllib.request, "urlopen", lambda request, timeout: Response(body, {"Content-Encoding": "gzip"}))
+    monkeypatch.setattr(registries, "send", lambda request, timeout: Response(body, {"Content-Encoding": "gzip"}))
     assert registries.fetch("https://example.com/x") == {"zipped": True}
 
 
@@ -339,12 +339,12 @@ def test_fetchmodified_reads_last_modified(monkeypatch):
         assert request.get_method() == "HEAD"
         return Response(b"", {"Last-Modified": "Mon, 18 Dec 2023 20:49:31 GMT"})
 
-    monkeypatch.setattr(registries.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(registries, "send", urlopen)
     assert registries.fetchmodified("https://example.com/x.pom") == datetime(2023, 12, 18, 20, 49, 31, tzinfo=timezone.utc)
 
 
 def test_fetchmodified_without_the_header_is_unreachable(monkeypatch):
-    monkeypatch.setattr(registries.urllib.request, "urlopen", lambda request, timeout: Response(b""))
+    monkeypatch.setattr(registries, "send", lambda request, timeout: Response(b""))
     with pytest.raises(Unreachable, match="Last-Modified"):
         registries.fetchmodified("https://example.com/x.pom")
 

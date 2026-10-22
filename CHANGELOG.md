@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1 (2026-10-22)
+
+- Much faster with nothing cached. Each lookup thread keeps its connection
+  to a registry open instead of starting a new one for every request:
+  2,048 versions across three big lockfiles went from 39 seconds to 7.
+  Through a proxy, requests go the way they did before.
+- An npm version that was unpublished is now reported even when another
+  lockfile in the same run had already fetched that package.
+
 ## 0.5.0 (2026-10-22)
 
 New things to check:

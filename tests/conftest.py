@@ -305,3 +305,4 @@ def no_network(monkeypatch):
         raise AssertionError(f"a test tried to reach the network: {getattr(request, 'full_url', request)}")
 
     monkeypatch.setattr(registries.urllib.request, "urlopen", refuse)
+    monkeypatch.setattr(registries, "send", refuse)
