@@ -16,14 +16,13 @@ The rules every item has to keep:
 ## Next
 
 - **Hex (Elixir).** A pull request is in review.
-- **R (CRAN).** A pull request is approved and waiting to be merged.
 - **A benchmark script.** Reproducible cold and warm cache timings on public
   lockfiles, so speed claims can be checked by anyone.
 - **The v1.0 contract.** Exit codes, the JSON schema
   ([docs/json.md](docs/json.md)), config keys and the Python API, written down
   as what won't change without a major version.
-- **Research issues** for vcpkg, Nix flakes, Bazel's central registry and R
-  (CRAN, renv). Each needs a publish time that can't be set by the author;
+- **Research issues** for vcpkg, Nix flakes and Bazel's central registry.
+  Each needs a publish time that can't be set by the author;
   the issue for each says where that would come from, if anywhere.
 
 ## Later
@@ -119,6 +118,7 @@ Done means released, with tests. The version says when.
 | 39 | Private registry setup | Done, 0.7.0, with 18 |
 | 40 | Extension interface | Not planned as plugins; documented in CONTRIBUTING |
 | | Terraform providers | Done, 0.6.0 (not on the original list) |
+| | R (renv.lock, CRAN) | Done, 0.8.0, contributed by @tyza66 (not on the original list) |
 
 ### Integrations
 

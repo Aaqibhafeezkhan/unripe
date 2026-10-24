@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0 (2026-10-23)
+
+- R: unripe reads `renv.lock` and dates packages by when CRAN published
+  them, through crandb.r-pkg.org, using each version's own
+  `Date/Publication`. Packages from a Posit Package Manager mirror of CRAN
+  count as CRAN; Bioconductor, GitHub and local packages are skipped. The
+  ecosystem is called `cran`. Contributed by @tyza66.
+
 ## 0.7.0 (2026-10-23)
 
 - `[registries]` in `.unripe.toml` points npm, PyPI, Conan or the Go proxy at
