@@ -189,6 +189,7 @@ class FakeRegistry:
                     {"version": version, "inserted_at": iso(moment)}
                     for version, moment in self.versions("hex", name).items()
                 ],
+                "retirements": {version: {"reason": "security", "message": ""} for ecosystem, package, version in self.yanked if (ecosystem, package) == ("hex", name)},
             }
         if parsed.netloc == "registry.terraform.io":
             name = re.fullmatch(r"/v2/providers/([^/]+/[^/]+)", path).group(1)

@@ -50,6 +50,15 @@ def test_hex_fetches_a_package_once_for_all_its_versions(fake, lookups):
     assert fake.urls == ["https://hex.pm/api/packages/jason"]
 
 
+def test_retired_hex_versions_are_never_suggested(fake, lookups):
+    fake.add("hex", "plug", "1.15.0", timedelta(days=60))
+    fake.add("hex", "plug", "1.15.1", timedelta(days=40))
+    fake.add("hex", "plug", "1.15.2", timedelta(hours=2))
+    fake.yanked.add(("hex", "plug", "1.15.1"))
+    assert set(lookups.versions("hex", "plug")) == {"1.15.0", "1.15.1", "1.15.2"}
+    assert lookups.pulled[("hex", "plug")] == {"1.15.1"}
+
+
 def test_pypi_takes_the_first_file_uploaded(fake, lookups):
     moment = fake.add("pypi", "django", "5.0.2")
     # the fake uploads a wheel an hour after the sdist

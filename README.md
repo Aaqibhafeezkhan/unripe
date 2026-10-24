@@ -403,7 +403,7 @@ until = 2026-11-15
 An exclude is a package name or a glob. Prefix it with an ecosystem
 (`npm:`, `pypi:`, `cargo:`, `go:`, `composer:`, `rubygems:`, `nuget:`,
 `maven:`, `jsr:`, `actions:`, `pub:`, `cocoapods:`, `swift:`, `terraform:`,
-`conan:`, `cran:`) to limit it to one, and add `@version` to limit
+`conan:`, `cran:`, `hex:`) to limit it to one, and add `@version` to limit
 it to certain versions, like `@types/node@20.*`. Gradle packages are named
 `group:artifact`, like `maven:com.mycorp:*`. PyPI names are normalised the
 way PyPI does it, so `Typing_Extensions` and `typing-extensions` are the same
@@ -515,7 +515,8 @@ When a version is too new, unripe looks for the newest version in the same
 release line (same major version, or same minor below 1.0) that is old
 enough, skipping prereleases and anything yanked or unpublished, and
 preferring versions that aren't deprecated. It does this for npm, PyPI,
-Cargo, Composer, RubyGems, NuGet, JSR, pub.dev, CocoaPods and Terraform.
+Cargo, Composer, RubyGems, NuGet, JSR, pub.dev, CocoaPods, Terraform, CRAN
+and Hex.
 
 Publish times never change, so answers are cached on disk forever, in
 `~/.cache/unripe` (`%LOCALAPPDATA%\unripe\cache` on Windows), or wherever
@@ -524,8 +525,8 @@ apart from finding older versions for anything that is too new, and
 `--offline` makes none at all. Each version is looked up once even if
 several lockfiles have it, lookups run 16 at a time, and each keeps its
 connection to a registry open between requests. For npm,
-Cargo, Composer, RubyGems, JSR, pub.dev, CocoaPods and Terraform one request
-covers every version of a package. GitHub Action tags like `v7` move, so those are looked up every run.
+Cargo, Composer, RubyGems, JSR, pub.dev, CocoaPods, Terraform, CRAN and Hex
+one request covers every version of a package. GitHub Action tags like `v7` move, so those are looked up every run.
 
 NuGet and Maven needed care too. nuget.org reports an unlisted version as
 published in 1900, so unripe reads its real time from the NuGet catalog

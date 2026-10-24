@@ -38,8 +38,8 @@ that in CI, from the lockfile, for every ecosystem in the repository.
 
 Most registries record when a version was uploaded, and the uploader can't
 change that: npm, PyPI, crates.io, RubyGems, NuGet, Packagist, JSR, pub.dev,
-the CocoaPods trunk, the Terraform registry and ConanCenter (the time a
-recipe revision reached the server). Maven repositories don't record it, but
+the CocoaPods trunk, the Terraform registry, hex.pm and ConanCenter (the time
+a recipe revision reached the server). Maven repositories don't record it, but
 they never change a file once published, so the `Last-Modified` header of a
 version's POM is its publish time.
 

@@ -159,13 +159,18 @@ def composer(text: str, lockfile: str) -> list[Package]:
 
 
 def mixlock(text: str, lockfile: str) -> list[Package]:
-    """Hex packages from mix.lock, excluding git and non-public Hex repositories."""
+    """
+    Hex packages from mix.lock, excluding git and non-public Hex repositories
+    (an organisation's packages are in "hexpm:org"). The key is the name the
+    project gave the dependency; the atom after :hex is the package on hex.pm,
+    which differs for an aliased dependency.
+    """
     found = []
-    pattern = re.compile(r'^\s*"([^"]+)":\s*\{:hex,\s*:[^,]+,\s*"([^"]+)",.*?,\s*"hexpm",\s*"[^"]+"\s*\}')
+    pattern = re.compile(r'^\s*"([^"]+)":\s*\{:hex,\s*:"?([^,"]+)"?,\s*"([^"]+)",.*?,\s*"hexpm",\s*"[^"]+"\s*\}')
     for line in text.splitlines():
         match = pattern.match(line)
         if match:
-            found.append(Package("hex", match.group(1), match.group(2), lockfile))
+            found.append(Package("hex", match.group(2), match.group(3), lockfile))
     return found
 
 

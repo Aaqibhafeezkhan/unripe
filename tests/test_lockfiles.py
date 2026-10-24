@@ -390,6 +390,8 @@ def test_mix_lock_reads_public_hex_and_skips_git_and_other_repositories():
         ("castore", "0.1.22"),
         ("connection", "1.1.0"),
         ("cowboy", "2.10.0"),
+        # an aliased dependency is looked up by its package name, not the alias
+        ("jason", "1.4.4"),
     }
 
 
