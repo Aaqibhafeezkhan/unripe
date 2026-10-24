@@ -1,8 +1,28 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 (2026-10-23)
 
-- Add Elixir `mix.lock` parsing and Hex release publication times.
+- R: unripe reads `renv.lock` and dates packages by when CRAN published
+  them, through crandb.r-pkg.org, using each version's own
+  `Date/Publication`. Packages from a Posit Package Manager mirror of CRAN
+  count as CRAN; Bioconductor, GitHub and local packages are skipped. The
+  ecosystem is called `cran`. Contributed by @tyza66.
+
+## 0.7.0 (2026-10-23)
+
+- `[registries]` in `.unripe.toml` points npm, PyPI, Conan or the Go proxy at
+  your own registry or mirror. A registry can take a token (`token-env`) or
+  a user and password (`basic-env`) from an environment variable; the
+  secret never goes in the file, is only sent over https to that registry,
+  and never follows a redirect to another host. `unripe config` and
+  `unripe doctor` show whether each variable is set, never its value.
+- Behind a proxy, a redirect to another host no longer carries the
+  `Authorization` header with it. That also covers `GITHUB_TOKEN`.
+- `--since` no longer fails on Windows with `WinError 6` when unripe is
+  started without a console, by an agent or a service for example: git gets
+  an empty stdin instead of an inherited one.
+- A test that failed when `NO_COLOR` was already set now clears it first.
+  Thanks to @tyza66 for reporting both.
 
 ## 0.6.1 (2026-10-22)
 

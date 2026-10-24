@@ -10,6 +10,7 @@ A registry that cannot answer (down, rate limited, private package) is an
 
 from __future__ import annotations
 
+import base64
 import email.utils
 import fnmatch
 import gzip
@@ -81,6 +82,45 @@ REDIRECTS = (301, 302, 303, 307, 308)
 STALE = (http.client.RemoteDisconnected, http.client.CannotSendRequest, http.client.ResponseNotReady, ConnectionResetError, BrokenPipeError)
 
 
+# credentials for registries named in the config: (the registry's URL, the
+# Authorization header's scheme, the environment variable that holds the secret)
+CREDENTIALS: list[tuple[str, str, str]] = []
+
+
+def within(url: str, base: str) -> bool:
+    """Whether a URL is on the same scheme and host as a registry's URL, under its path."""
+    target, root = urllib.parse.urlsplit(url), urllib.parse.urlsplit(base)
+    if (target.scheme, target.netloc.lower()) != (root.scheme, root.netloc.lower()):
+        return False
+    prefix = root.path.rstrip("/")
+    return target.path == prefix or target.path.startswith(prefix + "/")
+
+
+def authorization(url: str) -> str | None:
+    """The Authorization header for a request, when it goes to a registry that has credentials set."""
+    for base, scheme, variable in CREDENTIALS:
+        secret = os.environ.get(variable)
+        if secret and within(url, base):
+            if scheme == "Basic":
+                return "Basic " + base64.b64encode(secret.encode("utf-8")).decode("ascii")
+            return f"Bearer {secret}"
+    # a GitHub token only ever goes to GitHub's own API
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token and url.startswith("https://api.github.com/"):
+        return f"Bearer {token}"
+    return None
+
+
+class Redirects(urllib.request.HTTPRedirectHandler):
+    """urllib's redirects, except that credentials never follow one to another host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        moved = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if moved is not None and urllib.parse.urlsplit(newurl).netloc != urllib.parse.urlsplit(req.full_url).netloc:
+            moved.remove_header("Authorization")
+        return moved
+
+
 def proxied(parts: urllib.parse.SplitResult) -> bool:
     """Whether a proxy is set for this url, in which case urllib does the request as it always has."""
     proxy = urllib.request.getproxies().get(parts.scheme)
@@ -139,9 +179,11 @@ def send(request: urllib.request.Request, timeout: float):
     for _ in range(6):
         parts = urllib.parse.urlsplit(url)
         if parts.scheme not in ("http", "https") or proxied(parts):
-            context = tls()
             request = urllib.request.Request(url, data=data, headers=headers, method=method)
-            return urllib.request.urlopen(request, timeout=timeout, context=context) if context else urllib.request.urlopen(request, timeout=timeout)
+            # build_opener adds the proxy and https handlers; ours replaces the plain redirect one
+            context = tls()
+            handlers = [Redirects()] + ([urllib.request.HTTPSHandler(context=context)] if context else [])
+            return urllib.request.build_opener(*handlers).open(request, timeout=timeout)
         response = exchange(parts, method, headers, data, timeout)
         location = response.getheader("Location")
         if response.status in REDIRECTS and location:
@@ -170,10 +212,10 @@ def ask(url: str, accept: str = "*/*", method: str = "GET", body: bytes | None =
     last = ""
     for attempt in range(TRIES):
         headers = {"User-Agent": AGENT, "Accept": accept, "Accept-Encoding": "gzip"}
-        # a token only ever goes to GitHub's own API, and only when one is set
-        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-        if token and url.startswith("https://api.github.com/"):
-            headers["Authorization"] = f"Bearer {token}"
+        # credentials only ever go to the registry they were set for, and only when set
+        credential = authorization(url)
+        if credential:
+            headers["Authorization"] = credential
         if body is not None:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=body, headers=headers, method=method)
@@ -358,13 +400,13 @@ def goescape(module: str) -> str:
     return "".join(f"!{c.lower()}" if c.isupper() else c for c in module)
 
 
-def goproxy() -> str:
-    """The first real proxy in GOPROXY, or the public one."""
+def goproxy(fallback: str = "https://proxy.golang.org") -> str:
+    """The first real proxy in GOPROXY, or the config's, or the public one."""
     for entry in re.split(r"[,|]", os.environ.get("GOPROXY") or ""):
         entry = entry.strip()
         if entry and entry not in ("direct", "off"):
             return entry.rstrip("/")
-    return "https://proxy.golang.org"
+    return fallback
 
 
 def gosumdb(module: str) -> bool:
@@ -530,6 +572,7 @@ class Registries:
         now: datetime | None = None,
         mavenrepos: list[str] | tuple[str, ...] = (),
         offline: bool = False,
+        mirrors: dict | None = None,
     ):
         self.cache = cache
         # answer only from the cache: anything not in it is unknown
@@ -538,9 +581,19 @@ class Registries:
         self.sumdb = SumDB(now or datetime.now(timezone.utc), cache)
         # checking as of a past moment (--as-of): what was taken down since then was still up then
         self.replaying = now is not None and now < datetime.now(timezone.utc) - timedelta(hours=1)
-        self.npmurl = (npmurl or os.environ.get("UNRIPE_NPM_REGISTRY") or "https://registry.npmjs.org").rstrip("/")
-        self.pypiurl = (pypiurl or os.environ.get("UNRIPE_PYPI_URL") or "https://pypi.org").rstrip("/")
-        self.conanurl = (os.environ.get("UNRIPE_CONAN_REMOTE") or "https://center2.conan.io").rstrip("/")
+        # other addresses from the config's [registries]; the environment wins over them
+        mirrors = mirrors or {}
+        configured = {name: mirror.url for name, mirror in mirrors.items()}
+        self.npmurl = (npmurl or os.environ.get("UNRIPE_NPM_REGISTRY") or configured.get("npm") or "https://registry.npmjs.org").rstrip("/")
+        self.pypiurl = (pypiurl or os.environ.get("UNRIPE_PYPI_URL") or configured.get("pypi") or "https://pypi.org").rstrip("/")
+        self.conanurl = (os.environ.get("UNRIPE_CONAN_REMOTE") or configured.get("conan") or "https://center2.conan.io").rstrip("/")
+        self.gourl = configured.get("go") or "https://proxy.golang.org"
+        # credentials are tied to the configured URL, so they never go to a registry the environment points elsewhere
+        CREDENTIALS[:] = [
+            (mirror.url, "Basic" if mirror.basic_env else "Bearer", mirror.basic_env or mirror.token_env)
+            for mirror in mirrors.values()
+            if mirror.token_env or mirror.basic_env
+        ]
         self.lookups: dict[str, Callable[[Package], datetime]] = {
             "npm": self.npm,
             "pypi": self.pypi,
@@ -557,6 +610,7 @@ class Registries:
             "swift": self.swift,
             "terraform": self.terraform,
             "conan": self.conan,
+            "cran": self.cran,
             "hex": self.hex,
         }
         # registries whose one answer covers every version are asked once per package
@@ -583,6 +637,7 @@ class Registries:
             "pub": self.puball,
             "cocoapods": self.cocoapodsall,
             "terraform": self.terraformall,
+            "cran": self.cranall,
             "hex": self.hexall,
         }
 
@@ -727,7 +782,7 @@ class Registries:
         return times
 
     def go(self, package: Package) -> datetime:
-        data = fetch(f"{goproxy()}/{goescape(package.name)}/@v/{goescape(package.version)}.info")
+        data = fetch(f"{goproxy(self.gourl)}/{goescape(package.name)}/@v/{goescape(package.version)}.info")
         if not isinstance(data, dict) or not data.get("Time"):
             raise Missing(f"{package} has no time in the module proxy")
         # the proxy's time is the commit's, which the author chooses
@@ -1048,3 +1103,30 @@ class Registries:
         if unreachable:
             raise unreachable
         raise Missing(f"{package} is in none of the Maven repositories unripe knows")
+
+    def cran(self, package: Package) -> datetime:
+        return self.every(package)
+
+    def cranall(self, name: str) -> dict[str, datetime]:
+        # crandb.r-pkg.org keeps every version CRAN published, archived ones included
+        data = fetch(f"https://crandb.r-pkg.org/{urllib.parse.quote(name)}/all")
+        data = data if isinstance(data, dict) else {}
+        # the same answer also carries each version's own DESCRIPTION, whose
+        # Date/Publication CRAN wrote in UTC
+        versions = data.get("versions") if isinstance(data.get("versions"), dict) else {}
+        timeline = data.get("timeline") if isinstance(data.get("timeline"), dict) else {}
+        times = {}
+        for version in set(timeline) | set(versions):
+            entry = versions.get(version)
+            try:
+                if isinstance(entry, dict) and entry.get("Date/Publication"):
+                    # CRAN writes "2026-07-15 10:58:26 UTC", and the oldest
+                    # versions write it with no zone at all
+                    times[str(version)] = datetime.strptime(str(entry["Date/Publication"]).replace(" UTC", ""), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                else:
+                    # a few very old versions have no Date/Publication; their
+                    # timeline is an hour early, which no longer matters by now
+                    times[str(version)] = when(str(timeline[version]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return times

@@ -43,7 +43,7 @@ ECOSYSTEM = {
     "enum": list(ECOSYSTEMS),
     "description": "The registry: npm (also pnpm, yarn, bun), pypi, cargo, go, composer, rubygems, nuget, maven "
     "(group:artifact), jsr, pub (Dart and Flutter), cocoapods, swift (owner/repo on GitHub), terraform "
-    "(namespace/provider), conan (C and C++ from ConanCenter), actions (owner/repo).",
+    "(namespace/provider), conan (C and C++ from ConanCenter), cran (R packages on CRAN), actions (owner/repo).",
 }
 MIN_AGE = {"type": "string", "description": "Override the minimum age, like 72h, 3d or 1w. Leave out to use the project's policy."}
 
@@ -146,7 +146,7 @@ def check_package(arguments: dict) -> tuple[str, dict]:
         raise Wrong("name is required")
     name = normal(name) if ecosystem == "pypi" else name.strip()
     policy = policy_for(Path.cwd(), arguments.get("min_age"))
-    found = Registries(Cache(cachedir()), mavenrepos=policy.maven_repositories)
+    found = Registries(Cache(cachedir()), mavenrepos=policy.maven_repositories, mirrors=policy.registries)
     now = datetime.now(timezone.utc)
     try:
         if version:
@@ -228,7 +228,7 @@ def check_lockfiles(arguments: dict) -> tuple[str, dict]:
     target = where(arguments.get("path"))
     directory = target if target.is_dir() else target.parent
     policy = policy_for(directory, arguments.get("min_age"))
-    found = Registries(Cache(cachedir()), mavenrepos=policy.maven_repositories)
+    found = Registries(Cache(cachedir()), mavenrepos=policy.maven_repositories, mirrors=policy.registries)
     try:
         result = check([str(target)], policy, found, since=arguments.get("since") or None)
     except Problem as error:

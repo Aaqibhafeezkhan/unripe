@@ -441,12 +441,28 @@ def test_jsr_versions_too_old_for_meta_json_are_dated_by_the_api(fake, lookups):
 
 
 
-@pytest.mark.parametrize("ecosystem, name, version", [("pub", "sqlite3", "2.9.4"), ("cocoapods", "GRDB.swift", "5.26.0"), ("terraform", "hashicorp/aws", "5.31.0")])
+@pytest.mark.parametrize("ecosystem, name, version", [("pub", "sqlite3", "2.9.4"), ("cocoapods", "GRDB.swift", "5.26.0"), ("terraform", "hashicorp/aws", "5.31.0"), ("cran", "jsonlite", "1.8.4")])
 def test_app_registries_answer_and_suggest(fake, lookups, ecosystem, name, version):
     fresh = fake.add(ecosystem, name, version, timedelta(hours=3))
     fake.add(ecosystem, name, "0.0.1", timedelta(days=90))
     assert lookups.published(Package(ecosystem, name, version)) == fresh
     assert set(lookups.versions(ecosystem, name)) == {version, "0.0.1"}
+
+
+def test_cran_prefers_date_publication_over_the_timeline(fake, lookups):
+    """crandb's timeline sits an hour before each version's own Date/Publication, which is what a lookup goes by."""
+    moment = fake.add("cran", "jsonlite", "1.8.4", at=datetime(2022, 12, 6, 8, 10, 2, tzinfo=timezone.utc))
+    assert lookups.cranall("jsonlite") == {"1.8.4": moment}
+    # an hour early is crandb's own offset; a wider one must not be believed either
+    fake.timelineearly[("jsonlite", "1.8.4")] = timedelta(hours=5)
+    assert lookups.cranall("jsonlite") == {"1.8.4": moment}
+
+
+def test_cran_falls_back_to_the_timeline_when_date_publication_is_missing(fake, lookups):
+    """A few very old versions carry no Date/Publication; the timeline is all there is for them."""
+    moment = fake.add("cran", "MASS", "7.3-0", at=datetime(2009, 5, 7, 11, 20, 43, tzinfo=timezone.utc))
+    fake.nopublication.add(("MASS", "7.3-0"))
+    assert lookups.cranall("MASS") == {"7.3-0": moment - timedelta(hours=1)}
 
 
 def test_swift_is_dated_by_the_release_of_its_tag(fake, lookups):
@@ -498,3 +514,44 @@ def test_a_go_module_outside_the_checksum_database_is_dated_by_its_commit(fake, 
     public = Package("go", "github.com/BurntSushi/toml", "v1.3.2")
     lookups.published(public)
     assert lookups.basis(public) == ""
+
+
+def test_a_configured_registry_is_asked_with_its_own_credentials(fake, monkeypatch):
+    from unripe.policy import Mirror
+
+    monkeypatch.delenv("UNRIPE_NPM_REGISTRY", raising=False)
+    monkeypatch.setenv("NPM_TOKEN", "s3cret")
+    monkeypatch.setenv("PYPI_AUTH", "me:pw")
+    lookups = Registries(Cache(None), now=NOW, mirrors={
+        "npm": Mirror("https://npm.example.com/api/npm", token_env="NPM_TOKEN"),
+        "pypi": Mirror("https://pypi.example.com", basic_env="PYPI_AUTH"),
+        "go": Mirror("https://goproxy.example.com"),
+    })
+    assert lookups.npmurl == "https://npm.example.com/api/npm" and lookups.gourl == "https://goproxy.example.com"
+    assert registries.authorization("https://npm.example.com/api/npm/left-pad") == "Bearer s3cret"
+    assert registries.authorization("https://pypi.example.com/pypi/idna/json") == "Basic bWU6cHc="
+    # never to another host, another scheme, a neighbouring path or the public registry
+    for elsewhere in ("https://registry.npmjs.org/left-pad", "http://npm.example.com/api/npm/x", "https://npm.example.com/api/npmx/y", "https://evil.example.com/api/npm/x"):
+        assert registries.authorization(elsewhere) is None
+    # a variable that isn't set sends nothing
+    monkeypatch.delenv("NPM_TOKEN")
+    assert registries.authorization("https://npm.example.com/api/npm/left-pad") is None
+    # the environment's address wins, and the configured credentials don't follow it there
+    monkeypatch.setenv("NPM_TOKEN", "s3cret")
+    monkeypatch.setenv("UNRIPE_NPM_REGISTRY", "https://mirror.example.org")
+    moved = Registries(Cache(None), now=NOW, mirrors={"npm": Mirror("https://npm.example.com/api/npm", token_env="NPM_TOKEN")})
+    assert moved.npmurl == "https://mirror.example.org"
+    assert registries.authorization("https://mirror.example.org/left-pad") is None
+    # a run without the config forgets them
+    Registries(Cache(None), now=NOW)
+    assert registries.authorization("https://npm.example.com/api/npm/left-pad") is None
+
+
+def test_goproxy_from_the_environment_wins_over_the_config(fake, monkeypatch):
+    from unripe.policy import Mirror
+
+    monkeypatch.setenv("GOPROXY", "https://corp.example.com/go,direct")
+    assert registries.goproxy("https://goproxy.example.com") == "https://corp.example.com/go"
+    monkeypatch.delenv("GOPROXY")
+    lookups = Registries(Cache(None), now=NOW, mirrors={"go": Mirror("https://goproxy.example.com")})
+    assert registries.goproxy(lookups.gourl) == "https://goproxy.example.com"
