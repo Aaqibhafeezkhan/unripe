@@ -15,7 +15,6 @@ The rules every item has to keep:
 
 ## Next
 
-- **Hex (Elixir).** A pull request is in review.
 - **A benchmark script.** Reproducible cold and warm cache timings on public
   lockfiles, so speed claims can be checked by anyone.
 - **The v1.0 contract.** Exit codes, the JSON schema
@@ -108,7 +107,7 @@ Done means released, with tests. The version says when.
 | # | Item | Status |
 |---|---|---|
 | 31 | Dart and Flutter | Done, 0.6.0 |
-| 32 | Elixir (Hex) | In review |
+| 32 | Elixir (Hex) | Done, 0.9.0, contributed by @Aaqibhafeezkhan |
 | 33 | Swift Package Manager | Done, 0.6.0 |
 | 34 | CocoaPods | Done, 0.6.0 |
 | 35 | Conan | Done, 0.6.0 |

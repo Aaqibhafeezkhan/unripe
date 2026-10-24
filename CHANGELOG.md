@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.0 (2026-10-23)
+
+- Elixir and Erlang: unripe reads `mix.lock` and dates packages by hex.pm.
+  An aliased dependency is looked up by its package name, packages from an
+  organisation's private repository and from git are skipped, and versions
+  their maintainers retired are never suggested. The ecosystem is called
+  `hex`. Contributed by @Aaqibhafeezkhan.
+- `unripe doctor` has a sample package for every ecosystem, and a test keeps
+  it that way.
+
 ## 0.8.0 (2026-10-23)
 
 - R: unripe reads `renv.lock` and dates packages by when CRAN published
