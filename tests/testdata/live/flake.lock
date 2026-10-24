@@ -1,0 +1,27 @@
+{
+  "nodes": {
+    "flake-utils": {
+      "locked": {
+        "lastModified": 1653117584,
+        "narHash": "sha256-5Ma8Ag2QYbmoGFCmyTTtV+QcZeUlKDZKBOoU9q3NqnM=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "04c1b180862888302ddfb2e3ad9eaa63afc60cf8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "ref": "v1.0.0",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "flake-utils": "flake-utils"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

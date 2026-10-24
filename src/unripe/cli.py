@@ -36,6 +36,9 @@ CANARIES = {
     "terraform": ("hashicorp/aws", "5.31.0"),
     "conan": ("zlib", "1.3.1"),
     "hex": ("jason", "1.4.4"),
+    "nix": ("numtide/flake-utils", "04c1b180862888302ddfb2e3ad9eaa63afc60cf8"),
+    "bazel": ("abseil-py", "2.1.0"),
+    "vcpkg": ("microsoft/vcpkg", "10b7a178346f3f0abef60cecd5130e295afd8da4"),
     "cran": ("jsonlite", "1.8.4"),
 }
 

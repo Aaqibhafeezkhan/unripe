@@ -20,9 +20,6 @@ The rules every item has to keep:
 - **The v1.0 contract.** Exit codes, the JSON schema
   ([docs/json.md](docs/json.md)), config keys and the Python API, written down
   as what won't change without a major version.
-- **Research issues** for vcpkg, Nix flakes and Bazel's central registry.
-  Each needs a publish time that can't be set by the author;
-  the issue for each says where that would come from, if anywhere.
 
 ## Later
 
@@ -111,9 +108,9 @@ Done means released, with tests. The version says when.
 | 33 | Swift Package Manager | Done, 0.6.0 |
 | 34 | CocoaPods | Done, 0.6.0 |
 | 35 | Conan | Done, 0.6.0 |
-| 36 | vcpkg | Research issue |
-| 37 | Nix flakes | Research issue |
-| 38 | Bazel | Research issue |
+| 36 | vcpkg | Done, 0.10.0: the baseline commit |
+| 37 | Nix flakes | Done, 0.10.0 |
+| 38 | Bazel | Done, 0.10.0 |
 | 39 | Private registry setup | Done, 0.7.0, with 18 |
 | 40 | Extension interface | Not planned as plugins; documented in CONTRIBUTING |
 | | Terraform providers | Done, 0.6.0 (not on the original list) |

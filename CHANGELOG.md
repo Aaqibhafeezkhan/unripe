@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.10.0 (2026-10-24)
+
+New things to check:
+
+- Nix: `flake.lock`. nixpkgs from a NixOS channel is dated by when the
+  channel published that release; inputs on GitHub are dated by their
+  release or commit. Other hosts and local paths are skipped.
+- Bazel: `MODULE.bazel.lock` (Bazel 7.2 and later), modules from the Bazel
+  Central Registry, dated by when their files reached bcr.bazel.build, or
+  by when GitHub merged them into the registry if that is earlier. A yanked
+  version is reported as unknown.
+- vcpkg: the `builtin-baseline` in `vcpkg.json`, or the default registry's
+  baseline in `vcpkg-configuration.json`. vcpkg has no lockfile, and moving
+  the baseline is how a project takes new port versions, so the baseline
+  commit is what has to be old enough.
+
+Trust:
+
+- A commit GitHub made itself, merging a pull request from its website, is
+  dated by GitHub's time and no longer marked as a commit time the author
+  could set. That applies to GitHub Actions and Swift packages too.
+
 ## 0.9.0 (2026-10-23)
 
 - Elixir and Erlang: unripe reads `mix.lock` and dates packages by hex.pm.

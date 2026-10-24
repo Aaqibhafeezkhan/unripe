@@ -482,3 +482,33 @@ def test_damaged_lockfiles_never_crash_or_invent_packages():
             assert isinstance(found, list), path
             for package in found:
                 assert package.ecosystem and package.name and package.version, (path, package)
+
+
+def test_flake_lock_keeps_github_and_nixos_channel_inputs():
+    assert pairs("nix/flake.lock") == {
+        ("NixOS/nixpkgs", "8edc0c72e3a38faf5434e40d1f19431125fe4b30"),
+        ("hercules-ci/flake-parts", "024633cd702b10285db5cb19b40ad48d2399ba60"),
+        ("nix-systems/default", "d36eeed142f88b5a636f2e3856a53c61654cf29b"),
+        # a channel release, dated by the channel, and a GitHub archive, dated like a commit
+        ("https://releases.nixos.org/nixpkgs/nixpkgs-26.11pre1079252.7d5589bbf421/nixexprs.tar.zst", "7d5589bbf421c7b6f4185371abe3c465b1b557e9"),
+        ("numtide/flake-utils", "04c1b180862888302ddfb2e3ad9eaa63afc60cf8"),
+    }
+
+
+def test_bazel_lock_takes_the_highest_version_bazel_read_from_the_bcr():
+    assert pairs("bazel/MODULE.bazel.lock") == {("abseil-py", "2.1.0"), ("bazel_features", "1.50.0"), ("rules_cc", "0.2.25")}
+    from unripe.lockfiles.build import order
+
+    assert order("1.10.0") > order("1.9.1") and order("20250814.1") > order("20250512.0")
+    with pytest.raises(lockfiles.Unreadable, match="older than 7.2"):
+        lockfiles.read('{"lockFileVersion": 3, "moduleDepGraph": {}}', "MODULE.bazel.lock")
+
+
+def test_vcpkg_manifests_give_the_baseline():
+    assert pairs("vcpkg/vcpkg.json") == {("microsoft/vcpkg", "10b7a178346f3f0abef60cecd5130e295afd8da4")}
+    # the default registry in vcpkg-configuration.json, not another git registry
+    assert pairs("vcpkg-config/vcpkg-configuration.json") == {("microsoft/vcpkg", "c" * 40)}
+    # a manifest that pins no baseline takes whatever vcpkg has, and there is nothing to date
+    assert pairs("vcpkg-config/vcpkg.json") == set()
+    embedded = '{"name": "app", "vcpkg-configuration": {"default-registry": {"kind": "builtin", "baseline": "' + "e" * 40 + '"}}}'
+    assert [p.version for p in lockfiles.read(embedded, "vcpkg.json")] == ["e" * 40]

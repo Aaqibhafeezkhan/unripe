@@ -55,6 +55,12 @@ class FakeRegistry:
         self.tags: dict[str, dict[str, str]] = {}
         self.releases: dict[tuple[str, str], datetime] = {}
         self.commits: dict[tuple[str, str], datetime] = {}
+        # commits GitHub made itself when merging a pull request, so their time is GitHub's
+        self.merged: set[tuple[str, str]] = set()
+        # bazel central registry: when each module version reached GitHub, when bazel versions were yanked
+        self.bcrmerged: dict[tuple[str, str], datetime] = {}
+        # files served with a Last-Modified header, by URL (NixOS channel releases)
+        self.files: dict[str, datetime] = {}
         # osv.dev advisories, in OSV's own shape
         self.advisories: list[dict] = []
         self.posts: list[dict] = []
@@ -91,6 +97,14 @@ class FakeRegistry:
         self.urls.append(url)
         if "maven" in self.down:
             raise Unreachable(f"{url}: HTTP 503")
+        if url in self.files:
+            return self.files[url]
+        bcr = re.fullmatch(r"https://bcr\.bazel\.build/modules/([^/]+)/([^/]+)/MODULE\.bazel", url)
+        if bcr:
+            moment = self.versions("bazel", bcr.group(1)).get(bcr.group(2))
+            if moment is None:
+                raise Missing(url)
+            return moment
         flat = re.fullmatch(r"https://api\.nuget\.org/v3-flatcontainer/([^/]+)/([^/]+)/([^/]+)\.nupkg", url)
         if flat:
             name, version = flat.group(1), flat.group(2)
@@ -206,6 +220,13 @@ class FakeRegistry:
                 raise Missing(url)
             return {"scope": scope, "package": name, "version": version, "createdAt": moment.strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
         if parsed.netloc == "api.github.com":
+            if path == "/repos/bazelbuild/bazel-central-registry/commits":
+                folder = urllib.parse.parse_qs(parsed.query)["path"][0]
+                name, version = re.fullmatch(r"modules/([^/]+)/([^/]+)", folder).groups()
+                moment = self.bcrmerged.get((name, version))
+                if moment is None:
+                    return []
+                return [{"sha": "f" * 40, "committer": {"login": "web-flow"}, "commit": {"committer": {"date": iso(moment)}, "verification": {"verified": True}}}]
             match = re.fullmatch(r"/repos/([^/]+/[^/]+)/(tags|releases/tags/(.+)|commits/(.+))", path)
             repository = match.group(1)
             if match.group(2) == "tags":
@@ -222,7 +243,16 @@ class FakeRegistry:
             moment = self.commits.get((repository, match.group(4)))
             if moment is None:
                 raise Missing(url)
-            return {"sha": match.group(4), "commit": {"committer": {"date": moment.strftime("%Y-%m-%dT%H:%M:%SZ")}}}
+            merged = (repository, match.group(4)) in self.merged
+            return {
+                "sha": match.group(4),
+                "committer": {"login": "web-flow" if merged else "someone"},
+                "commit": {"committer": {"date": moment.strftime("%Y-%m-%dT%H:%M:%SZ")}, "verification": {"verified": merged}},
+            }
+        if parsed.netloc == "bcr.bazel.build":
+            name = re.fullmatch(r"/modules/([^/]+)/metadata\.json", path).group(1)
+            listed = self.versions("bazel", name)
+            return {"versions": list(listed), "yanked_versions": {v: "broken" for e, n, v in self.yanked if (e, n) == ("bazel", name)}}
         if parsed.netloc == "pypi.org" and re.fullmatch(r"/pypi/[^/]+/json", path):
             name = path.split("/")[2]
             releases = {}

@@ -395,6 +395,16 @@ def cachedir() -> Path:
     return Path.home() / ".cache" / "unripe"
 
 
+def merged(commit: dict) -> bool:
+    """
+    Whether GitHub itself made a commit, merging a pull request from its web
+    interface: then its time is GitHub's, not one its author chose.
+    """
+    committer = commit.get("committer") if isinstance(commit, dict) else None
+    verified = (((commit.get("commit") or {}).get("verification") or {}).get("verified")) if isinstance(commit, dict) else False
+    return isinstance(committer, dict) and committer.get("login") == "web-flow" and verified is True
+
+
 def goescape(module: str) -> str:
     """The Go module proxy spells capital letters as `!` plus the lower case letter."""
     return "".join(f"!{c.lower()}" if c.isupper() else c for c in module)
@@ -578,7 +588,8 @@ class Registries:
         # answer only from the cache: anything not in it is unknown
         self.offline = offline
         self.mavenextra = list(mavenrepos)
-        self.sumdb = SumDB(now or datetime.now(timezone.utc), cache)
+        self.now = now or datetime.now(timezone.utc)
+        self.sumdb = SumDB(self.now, cache)
         # checking as of a past moment (--as-of): what was taken down since then was still up then
         self.replaying = now is not None and now < datetime.now(timezone.utc) - timedelta(hours=1)
         # other addresses from the config's [registries]; the environment wins over them
@@ -612,6 +623,9 @@ class Registries:
             "conan": self.conan,
             "cran": self.cran,
             "hex": self.hex,
+            "nix": self.nix,
+            "bazel": self.bazel,
+            "vcpkg": self.vcpkg,
         }
         # registries whose one answer covers every version are asked once per package
         self.pending: dict[str, threading.Lock] = {}
@@ -1000,8 +1014,48 @@ class Registries:
         stamp = ((data.get("commit") or {}).get("committer") or {}).get("date") if isinstance(data, dict) else None
         if not stamp:
             raise Missing(f"{repository}@{ref} has no release and no commit time")
-        self.dated(ecosystem, repository, ref, COMMIT)
+        self.dated(ecosystem, repository, ref, "" if merged(data) else COMMIT)
         return when(str(stamp))
+
+    def nix(self, package: Package) -> datetime:
+        """
+        A flake input: a NixOS channel release by when the channel published
+        it, a GitHub commit like an action, by its release or commit time.
+        """
+        if package.name.startswith("https://"):
+            return fetchmodified(package.name)
+        return self.released(package.name, package.version, package.version, "nix")
+
+    def bazel(self, package: Package) -> datetime:
+        """
+        A Bazel Central Registry module, by when its MODULE.bazel reached
+        bcr.bazel.build. A file can be uploaded again later but never earlier,
+        so that time only errs towards too new; for a recent one, the time
+        GitHub merged the version into the registry, when earlier, wins.
+        """
+        name, version = package.name, package.version
+        metadata = fetch(f"https://bcr.bazel.build/modules/{urllib.parse.quote(name)}/metadata.json")
+        yanked = metadata.get("yanked_versions") if isinstance(metadata, dict) else None
+        if isinstance(yanked, dict) and version in yanked:
+            raise Said(f"yanked from the Bazel Central Registry: {yanked[version]}")
+        uploaded = fetchmodified(f"https://bcr.bazel.build/modules/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}/MODULE.bazel")
+        if uploaded < self.now - timedelta(days=30):
+            return uploaded
+        try:
+            commits = fetch(f"https://api.github.com/repos/bazelbuild/bazel-central-registry/commits?path=modules/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}&per_page=100")
+        except (Missing, Unreachable):
+            return uploaded
+        # the oldest commit touching the version's folder added it; only GitHub's own merge time counts
+        first = commits[-1] if isinstance(commits, list) and commits else None
+        if isinstance(first, dict) and merged(first):
+            stamp = ((first.get("commit") or {}).get("committer") or {}).get("date")
+            if stamp and when(str(stamp)) < uploaded:
+                return when(str(stamp))
+        return uploaded
+
+    def vcpkg(self, package: Package) -> datetime:
+        """The vcpkg baseline commit, by its release or by when GitHub merged it."""
+        return self.released(package.name, package.version, package.version, "vcpkg")
 
     def pub(self, package: Package) -> datetime:
         return self.every(package)

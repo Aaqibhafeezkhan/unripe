@@ -54,8 +54,16 @@ says:
   commit claims to be older. Modules outside the checksum database (private
   ones, or with `GONOSUMDB` set) only have the commit time.
   [go.md](go.md) has the details.
-- **GitHub Actions and Swift packages.** Dated by the GitHub release for the
-  tag. A tag or commit with no release falls back to the commit time.
+- **GitHub Actions, Swift packages, Nix inputs on GitHub and the vcpkg
+  baseline.** Dated by the GitHub release for the tag. A commit with no
+  release falls back to its commit time, except when GitHub made the commit
+  itself, merging a pull request from its website: then the time is
+  GitHub's, and it counts like a registry's.
+
+Two more come from file servers that set the time themselves: a NixOS
+channel release (nixpkgs in a `flake.lock`), and a module's `MODULE.bazel`
+on bcr.bazel.build, which can be uploaded again later but never earlier, so
+it only ever errs towards too new.
 
 When a version passes on a commit time, the report says so: `by its commit
 time` in the text output, `"dated_by": "commit"` in JSON.

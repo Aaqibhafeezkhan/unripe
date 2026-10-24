@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 # the registries unripe can ask for a publish time
-ECOSYSTEMS = ("npm", "pypi", "cargo", "go", "composer", "rubygems", "nuget", "maven", "jsr", "actions", "pub", "cocoapods", "swift", "terraform", "conan", "cran", "hex")
+ECOSYSTEMS = ("npm", "pypi", "cargo", "go", "composer", "rubygems", "nuget", "maven", "jsr", "actions", "pub", "cocoapods", "swift", "terraform", "conan", "cran", "hex", "nix", "bazel", "vcpkg")
 REGISTRY = {
     "npm": "the npm registry",
     "pypi": "PyPI",
@@ -25,6 +25,9 @@ REGISTRY = {
     "conan": "ConanCenter",
     "cran": "CRAN",
     "hex": "hex.pm",
+    "nix": "GitHub and the NixOS channels",
+    "bazel": "the Bazel Central Registry",
+    "vcpkg": "GitHub (microsoft/vcpkg)",
 }
 STATES = ("unripe", "unknown", "allowed", "ok", "excluded")
 

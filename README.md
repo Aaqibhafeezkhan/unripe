@@ -9,7 +9,8 @@
 unripe checks your lockfiles and fails if any dependency version was
 published too recently. The default is 3 days. It works across npm, pnpm,
 yarn, bun, Deno, PyPI, Cargo, Go, Composer, RubyGems, NuGet, Gradle, Dart and
-Flutter, CocoaPods, Swift, Terraform, Conan, R and Elixir, and it can check the actions
+Flutter, CocoaPods, Swift, Terraform, Conan, R, Elixir, Nix, Bazel and vcpkg,
+and it can check the actions
 your GitHub workflows use too. A repo with a Python backend, a JavaScript
 frontend and a Flutter app gets one check and one policy instead of a
 different setting in every tool.
@@ -82,7 +83,7 @@ don't do. It checks what is already in the lockfile, including whatever a bot,
 an agent or an old tool put there. It reports on just the versions a pull
 request adds. It applies one policy to every ecosystem in the repo. And it
 covers Go, Composer, NuGet, Gradle, Dart, CocoaPods, Swift, Terraform, Conan,
-R and GitHub Actions, which don't have a setting yet.
+R, Nix, Bazel, vcpkg and GitHub Actions, which don't have a setting yet.
 
 [docs/case-studies.md](docs/case-studies.md) replays more incidents the same
 way, and [docs/threat-model.md](docs/threat-model.md) says plainly what a
@@ -190,6 +191,9 @@ unripe check --quiet
 | `composer.lock` | the lockfile's own `time` field, else Packagist |
 | `Gemfile.lock` | rubygems.org |
 | `mix.lock` | Hex (hex.pm) |
+| `flake.lock` (Nix) | the NixOS channels for nixpkgs releases, GitHub for GitHub inputs |
+| `MODULE.bazel.lock` (Bazel 7.2+) | the Bazel Central Registry |
+| `vcpkg.json`, `vcpkg-configuration.json` | GitHub, for the `microsoft/vcpkg` baseline |
 | `packages.lock.json` | nuget.org |
 | `gradle.lockfile`, `gradle/dependency-locks/*.lockfile` | Maven Central, Google's Maven repository, the Gradle plugin portal |
 | `pubspec.lock` (Dart and Flutter) | pub.dev |
@@ -218,6 +222,17 @@ on GitHub are checked. Terraform providers from other registries, including
 OpenTofu's, are skipped. A Conan version is dated by the recipe revision the
 lockfile pins, since a new revision of an old version is new code; recipes
 with a user and channel aren't on ConanCenter and are skipped.
+
+In a `flake.lock`, nixpkgs from a NixOS channel is dated by when the channel
+published that release, which is often a day after the commit. Inputs on
+GitHub are dated like GitHub Actions; other hosts, plain git servers and
+local paths are skipped. A `MODULE.bazel.lock` lists every module version
+Bazel read while resolving, and Bazel uses the highest of each, so that is
+the one checked; a version the registry yanked is reported as unknown. vcpkg
+has no lockfile: a manifest pins a `builtin-baseline`, a commit of
+microsoft/vcpkg that every port's version comes from. Moving the baseline is
+how a project takes new versions, so unripe checks that the baseline commit
+is old enough.
 
 renv.lock packages are read from CRAN, or from a Posit Package Manager mirror
 serving CRAN under `/cran/`, under whatever name the repository was given.
@@ -254,7 +269,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: TexWoW/unripe@v0.9.0
+      - uses: TexWoW/unripe@v0.10.0
         with:
           min-age: 3d
           comment: true
@@ -302,7 +317,7 @@ If you want the results as code scanning alerts, write SARIF and upload it
 (this needs `security-events: write`):
 
 ```yaml
-      - uses: TexWoW/unripe@v0.9.0
+      - uses: TexWoW/unripe@v0.10.0
         with:
           sarif: unripe.sarif
       - uses: github/codeql-action/upload-sarif@v4
@@ -316,7 +331,7 @@ If you want the results as code scanning alerts, write SARIF and upload it
 ```yaml
 repos:
   - repo: https://github.com/TexWoW/unripe
-    rev: v0.9.0
+    rev: v0.10.0
     hooks:
       - id: unripe
 ```
@@ -328,7 +343,7 @@ you only want it to look at what the commit adds.
 
 ```yaml
 include:
-  - remote: https://raw.githubusercontent.com/TexWoW/unripe/v0.9.0/ci/gitlab.yml
+  - remote: https://raw.githubusercontent.com/TexWoW/unripe/v0.10.0/ci/gitlab.yml
 ```
 
 That adds an `unripe` job to the `test` stage. On merge requests it checks
@@ -349,7 +364,7 @@ their cooldowns too, so they stop opening pull requests unripe would fail.
 ## With AI coding agents
 
 ```bash
-claude mcp add unripe -- uvx unripe@0.9.0 mcp
+claude mcp add unripe -- uvx unripe@0.10.0 mcp
 ```
 
 `unripe mcp` is a Model Context Protocol server with three read-only tools:
@@ -403,7 +418,7 @@ until = 2026-11-15
 An exclude is a package name or a glob. Prefix it with an ecosystem
 (`npm:`, `pypi:`, `cargo:`, `go:`, `composer:`, `rubygems:`, `nuget:`,
 `maven:`, `jsr:`, `actions:`, `pub:`, `cocoapods:`, `swift:`, `terraform:`,
-`conan:`, `cran:`, `hex:`) to limit it to one, and add `@version` to limit
+`conan:`, `cran:`, `hex:`, `nix:`, `bazel:`, `vcpkg:`) to limit it to one, and add `@version` to limit
 it to certain versions, like `@types/node@20.*`. Gradle packages are named
 `group:artifact`, like `maven:com.mycorp:*`. PyPI names are normalised the
 way PyPI does it, so `Typing_Extensions` and `typing-extensions` are the same
@@ -581,7 +596,7 @@ As of October 2026:
 | Cargo | `registry.global-min-publish-age`, unstable now, expected stable in Rust 1.100 |
 | Composer | proposed |
 | Go, NuGet, Maven, Gradle, GitHub Actions | nothing yet |
-| Dart, CocoaPods, Swift, Terraform, Conan, R | nothing we know of |
+| Dart, CocoaPods, Swift, Terraform, Conan, R, Nix, Bazel, vcpkg | nothing we know of |
 
 These stop a new version at install time, which unripe can't do, so use
 them where you can; `unripe config` prints the lines for your repo. unripe

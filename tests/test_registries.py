@@ -564,3 +564,47 @@ def test_goproxy_from_the_environment_wins_over_the_config(fake, monkeypatch):
     monkeypatch.delenv("GOPROXY")
     lookups = Registries(Cache(None), now=NOW, mirrors={"go": Mirror("https://goproxy.example.com")})
     assert registries.goproxy(lookups.gourl) == "https://goproxy.example.com"
+
+
+def test_nix_inputs_are_dated_by_the_channel_or_github(fake, lookups):
+    channel = "https://releases.nixos.org/nixpkgs/nixpkgs-26.11pre1.abc/nixexprs.tar.zst"
+    fake.files[channel] = NOW - timedelta(days=20)
+    assert lookups.published(Package("nix", channel, "a" * 40)) == NOW - timedelta(days=20)
+    # a commit GitHub merged itself is GitHub's time, not the author's
+    fake.tags["NixOS/nixpkgs"] = {}
+    fake.commits[("NixOS/nixpkgs", "b" * 40)] = NOW - timedelta(days=9)
+    fake.merged.add(("NixOS/nixpkgs", "b" * 40))
+    merged = Package("nix", "NixOS/nixpkgs", "b" * 40)
+    assert lookups.published(merged) == NOW - timedelta(days=9) and lookups.basis(merged) == ""
+    fake.tags["someone/flake"] = {}
+    fake.commits[("someone/flake", "c" * 40)] = NOW - timedelta(days=9)
+    pushed = Package("nix", "someone/flake", "c" * 40)
+    lookups.published(pushed)
+    assert lookups.basis(pushed) == "commit"
+
+
+def test_bazel_modules_by_upload_then_merge_time(fake, lookups):
+    old = fake.add("bazel", "abseil-py", "2.1.0", timedelta(days=200))
+    assert lookups.published(Package("bazel", "abseil-py", "2.1.0")) == old
+    assert not any("api.github.com" in url for url in fake.urls)
+    # uploaded again recently, but GitHub merged it long before: the merge wins
+    fake.add("bazel", "rules_cc", "0.2.25", timedelta(days=2))
+    fake.bcrmerged[("rules_cc", "0.2.25")] = NOW - timedelta(days=40)
+    assert lookups.published(Package("bazel", "rules_cc", "0.2.25")) == NOW - timedelta(days=40)
+    # genuinely new: the upload time stands
+    fresh = fake.add("bazel", "bazel_features", "1.51.0", timedelta(hours=5))
+    assert lookups.published(Package("bazel", "bazel_features", "1.51.0")) == fresh
+    fake.add("bazel", "bazel_features", "1.7.0", timedelta(days=900))
+    fake.yanked.add(("bazel", "bazel_features", "1.7.0"))
+    with pytest.raises(Missing, match="yanked from the Bazel Central Registry: broken"):
+        lookups.published(Package("bazel", "bazel_features", "1.7.0"))
+
+
+def test_vcpkg_baseline_by_release_or_merge(fake, lookups):
+    fake.tags["microsoft/vcpkg"] = {"2024.10.21": "d" * 40}
+    fake.releases[("microsoft/vcpkg", "2024.10.21")] = NOW - timedelta(days=300)
+    assert lookups.published(Package("vcpkg", "microsoft/vcpkg", "d" * 40)) == NOW - timedelta(days=300)
+    fake.commits[("microsoft/vcpkg", "e" * 40)] = NOW - timedelta(hours=3)
+    fake.merged.add(("microsoft/vcpkg", "e" * 40))
+    newest = Package("vcpkg", "microsoft/vcpkg", "e" * 40)
+    assert lookups.published(newest) == NOW - timedelta(hours=3) and lookups.basis(newest) == ""

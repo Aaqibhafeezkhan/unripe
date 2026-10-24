@@ -114,6 +114,18 @@ def test_every_fixture_checks_with_a_registry_that_knows_everything(fake, lookup
         if path.name == "bun.lockb":
             continue
         for package in lockfiles.read(path.read_text("utf-8"), path):
+            if package.ecosystem == "nix" and package.name.startswith("https://"):
+                fake.files[package.name] = NOW - timedelta(days=400)
+                continue
+            if package.ecosystem == "bazel":
+                fake.add("bazel", package.name, package.version)
+                continue
+            if package.ecosystem in ("nix", "vcpkg"):
+                # dated by the commit, which GitHub merged
+                fake.tags.setdefault(package.name, {})
+                fake.commits[(package.name, package.version)] = NOW - timedelta(days=400)
+                fake.merged.add((package.name, package.version))
+                continue
             if package.ecosystem == "swift":
                 # swift packages are dated by their github release
                 commit = package.version if len(package.version) == 40 else f"{abs(hash(package.version)):040d}"[:40]

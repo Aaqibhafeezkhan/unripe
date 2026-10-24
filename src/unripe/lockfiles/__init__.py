@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Callable
 
-from unripe.lockfiles import actions, apps, dotnet, javascript, jvm, others, python
+from unripe.lockfiles import actions, apps, build, dotnet, javascript, jvm, others, python
 from unripe.model import Package
 
 Parser = Callable[[str, str], list[Package]]
@@ -37,12 +37,16 @@ PARSERS: dict[str, Parser] = {
     "Package.resolved": apps.swiftresolved,
     ".terraform.lock.hcl": apps.terraform,
     "conan.lock": others.conan,
+    "flake.lock": build.flake,
+    "MODULE.bazel.lock": build.bazel,
+    "vcpkg.json": build.vcpkg,
+    "vcpkg-configuration.json": build.vcpkg,
     "renv.lock": others.renv,
 }
 PYLOCK = re.compile(r"^pylock\.([^.]+\.)?toml$")
 REQUIREMENTS = re.compile(r"^(requirements|constraints)[\w.-]*\.txt$", re.IGNORECASE)
 # never worth walking into: installed copies of dependencies, builds, caches, and go's test inputs
-SKIP = {"node_modules", ".git", ".hg", ".venv", "venv", "env", "vendor", "target", "dist", "build", "__pycache__", ".tox", ".nox", ".cache", "testdata", "bin", "obj", ".gradle", ".terraform", "Pods", ".build", ".dart_tool", ".swiftpm"}
+SKIP = {"node_modules", ".git", ".hg", ".venv", "venv", "env", "vendor", "target", "dist", "build", "__pycache__", ".tox", ".nox", ".cache", "testdata", "bin", "obj", ".gradle", ".terraform", "Pods", ".build", ".dart_tool", ".swiftpm", "vcpkg", "vcpkg_installed", "bazel-out", "bazel-bin", "bazel-testlogs"}
 
 
 class Unreadable(Exception):

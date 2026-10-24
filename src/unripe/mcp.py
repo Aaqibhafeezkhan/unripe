@@ -43,7 +43,7 @@ ECOSYSTEM = {
     "enum": list(ECOSYSTEMS),
     "description": "The registry: npm (also pnpm, yarn, bun), pypi, cargo, go, composer, rubygems, nuget, maven "
     "(group:artifact), jsr, pub (Dart and Flutter), cocoapods, swift (owner/repo on GitHub), terraform "
-    "(namespace/provider), conan (C and C++ from ConanCenter), cran (R packages on CRAN), hex (Elixir and Erlang), actions (owner/repo).",
+    "(namespace/provider), conan (C and C++ from ConanCenter), cran (R packages on CRAN), hex (Elixir and Erlang), nix (owner/repo and a commit), bazel, vcpkg (microsoft/vcpkg and a baseline commit), actions (owner/repo).",
 }
 MIN_AGE = {"type": "string", "description": "Override the minimum age, like 72h, 3d or 1w. Leave out to use the project's policy."}
 
@@ -77,7 +77,7 @@ TOOLS = [
             "Check every lockfile under a directory (package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock, "
             "deno.lock, uv.lock, poetry.lock, requirements.txt, Cargo.lock, go.mod, composer.lock, Gemfile.lock, "
             "packages.lock.json, gradle.lockfile, pubspec.lock, Podfile.lock, Package.resolved, "
-            ".terraform.lock.hcl, conan.lock and more) and report every locked version that is younger than the "
+            ".terraform.lock.hcl, conan.lock, renv.lock, mix.lock, flake.lock, MODULE.bazel.lock, vcpkg.json and more) and report every locked version that is younger than the "
             "minimum age or whose age is unknown. Set since to a git ref, like origin/main, to check only what "
             "changed since then."
         ),

@@ -115,7 +115,8 @@ LOCKFILES = (
     "no lockfiles found. unripe reads package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, yarn.lock,\n"
     "bun.lock, deno.lock, uv.lock, pylock.toml, poetry.lock, Pipfile.lock, requirements*.txt, Cargo.lock,\n"
     "go.mod, composer.lock, Gemfile.lock, packages.lock.json, gradle.lockfile, pubspec.lock, Podfile.lock,\n"
-    "Package.resolved, .terraform.lock.hcl and conan.lock"
+    "Package.resolved, .terraform.lock.hcl, conan.lock, renv.lock, mix.lock, flake.lock, MODULE.bazel.lock\n"
+    "and vcpkg.json"
 )
 
 
