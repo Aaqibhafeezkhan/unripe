@@ -3,6 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/unripe)](https://pypi.org/project/unripe/)
 [![CI](https://github.com/TexWoW/unripe/actions/workflows/ci.yml/badge.svg)](https://github.com/TexWoW/unripe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-unripe%20dependency%20cooldown-blue?logo=github)](https://github.com/marketplace/actions/unripe-dependency-cooldown)
 
 <!-- mcp-name: io.github.texWoW/unripe -->
 
