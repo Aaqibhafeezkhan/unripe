@@ -1,4 +1,4 @@
-name: unripe
+name: unripe dependency cooldown
 description: Fail when a locked dependency version was published more recently than you trust
 author: TexWoW
 branding:

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.1 (2026-10-24)
+
+- The Action is named "unripe dependency cooldown", so it can be listed on
+  the GitHub Marketplace (a GitHub account already has the name unripe).
+  Workflows keep using `TexWoW/unripe@v0.10.1` as before.
+
 ## 0.10.0 (2026-10-24)
 
 New things to check:
