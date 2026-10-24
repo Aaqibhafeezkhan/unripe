@@ -314,3 +314,9 @@ def test_config_and_doctor_show_configured_registries_without_secrets(project, f
     monkeypatch.delenv("NPM_TOKEN")
     assert cli.main(["doctor"]) == 1
     assert "registry   npm at https://npm.example.com (token from NPM_TOKEN, NOT SET)" in capsys.readouterr().out
+
+
+def test_doctor_has_a_sample_for_every_ecosystem():
+    from unripe.model import ECOSYSTEMS
+
+    assert set(cli.CANARIES) == set(ECOSYSTEMS)

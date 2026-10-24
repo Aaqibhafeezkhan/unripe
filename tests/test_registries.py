@@ -20,6 +20,7 @@ from unripe.registries import Cache, Missing, Registries, Unreachable, crateinde
         ("go", "github.com/BurntSushi/toml", "v1.3.2"),
         ("composer", "monolog/monolog", "3.5.0"),
         ("rubygems", "nokogiri", "1.16.0-x86_64-linux"),
+        ("hex", "jason", "1.4.4"),
     ],
 )
 def test_every_ecosystem_answers(fake, lookups, ecosystem, name, version):
@@ -39,6 +40,23 @@ def test_npm_fetches_a_package_once_for_all_its_versions(fake, lookups):
     lookups.published(Package("npm", "ms", "2.1.2"))
     lookups.published(Package("npm", "ms", "2.1.3"))
     assert len(fake.urls) == 1
+
+
+def test_hex_fetches_a_package_once_for_all_its_versions(fake, lookups):
+    older = fake.add("hex", "jason", "1.4.4", timedelta(days=30))
+    newer = fake.add("hex", "jason", "1.4.5", timedelta(days=10))
+    assert lookups.published(Package("hex", "jason", "1.4.4")) == older
+    assert lookups.published(Package("hex", "jason", "1.4.5")) == newer
+    assert fake.urls == ["https://hex.pm/api/packages/jason"]
+
+
+def test_retired_hex_versions_are_never_suggested(fake, lookups):
+    fake.add("hex", "plug", "1.15.0", timedelta(days=60))
+    fake.add("hex", "plug", "1.15.1", timedelta(days=40))
+    fake.add("hex", "plug", "1.15.2", timedelta(hours=2))
+    fake.yanked.add(("hex", "plug", "1.15.1"))
+    assert set(lookups.versions("hex", "plug")) == {"1.15.0", "1.15.1", "1.15.2"}
+    assert lookups.pulled[("hex", "plug")] == {"1.15.1"}
 
 
 def test_pypi_takes_the_first_file_uploaded(fake, lookups):

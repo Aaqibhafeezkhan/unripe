@@ -305,6 +305,7 @@ OSV = {
     "nuget": "NuGet",
     "maven": "Maven",
     "pub": "Pub",
+    "hex": "Hex",
 }
 
 
@@ -610,6 +611,7 @@ class Registries:
             "terraform": self.terraform,
             "conan": self.conan,
             "cran": self.cran,
+            "hex": self.hex,
         }
         # registries whose one answer covers every version are asked once per package
         self.pending: dict[str, threading.Lock] = {}
@@ -636,6 +638,7 @@ class Registries:
             "cocoapods": self.cocoapodsall,
             "terraform": self.terraformall,
             "cran": self.cranall,
+            "hex": self.hexall,
         }
 
     def published(self, package: Package) -> datetime:
@@ -1046,6 +1049,28 @@ class Registries:
                     times[str(attributes["version"])] = when(str(attributes["published-at"]))
                 except ValueError:
                     continue
+        return times
+
+    def hex(self, package: Package) -> datetime:
+        """The publish time recorded by the public Hex registry."""
+        return self.every(package)
+
+    def hexall(self, name: str) -> dict[str, datetime]:
+        """Fetch all published versions of a package from hex.pm in one request."""
+        data = fetch(f"https://hex.pm/api/packages/{urllib.parse.quote(name, safe='')}")
+        releases = data.get("releases") if isinstance(data, dict) else None
+        # retired versions still install, but their maintainers say not to use them
+        retired = data.get("retirements") if isinstance(data, dict) else None
+        for version in retired if isinstance(retired, dict) else {}:
+            self.pull("hex", name, str(version))
+        times = {}
+        for entry in releases or []:
+            if not isinstance(entry, dict) or not entry.get("version") or not entry.get("inserted_at"):
+                continue
+            try:
+                times[str(entry["version"])] = when(str(entry["inserted_at"]))
+            except (TypeError, ValueError):
+                continue
         return times
 
     def conan(self, package: Package) -> datetime:

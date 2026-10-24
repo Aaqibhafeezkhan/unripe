@@ -385,6 +385,16 @@ def test_find_skips_downloaded_pods_and_providers(tmp_path):
     assert [p.name for p in lockfiles.find([str(tmp_path)])] == ["Podfile.lock"]
 
 
+def test_mix_lock_reads_public_hex_and_skips_git_and_other_repositories():
+    assert pairs("elixir/mix.lock") == {
+        ("castore", "0.1.22"),
+        ("connection", "1.1.0"),
+        ("cowboy", "2.10.0"),
+        # an aliased dependency is looked up by its package name, not the alias
+        ("jason", "1.4.4"),
+    }
+
+
 def test_conan_lock_keeps_conancenter_references_with_their_revision():
     assert pairs("conan/conan.lock") == {
         ("zlib", "1.3.1#b8bc2603263cf7eccbd6e17e66b0ed76"),
