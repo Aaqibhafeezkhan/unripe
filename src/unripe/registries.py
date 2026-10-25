@@ -34,7 +34,7 @@ from typing import Callable
 from unripe import __version__
 from unripe.model import Package
 
-AGENT = f"unripe/{__version__} (+https://github.com/TexWoW/unripe)"
+AGENT = f"unripe/{__version__} (+https://github.com/glumly/unripe)"
 TIMEOUT = 20
 TRIES = 4
 # no registry answer unripe reads comes near this; a bigger one is refused rather than held in memory

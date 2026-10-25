@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "unripe"
-version = "0.10.1"
+version = "0.10.2"
 description = "Fail the build when a locked dependency is younger than you trust. One check for npm, pnpm, yarn, bun, Deno, PyPI, Cargo, Go, Composer, RubyGems, NuGet, Gradle, Dart, CocoaPods, Swift, Terraform, Conan, R renv.lock, Elixir mix.lock, Nix flake.lock, Bazel and vcpkg lockfiles, GitHub Actions, and an MCP server for AI agents."
 readme = "README.md"
 license = "MIT"
@@ -31,8 +31,8 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/TexWoW/unripe"
-Issues = "https://github.com/TexWoW/unripe/issues"
+Homepage = "https://github.com/glumly/unripe"
+Issues = "https://github.com/glumly/unripe/issues"
 
 [project.scripts]
 unripe = "unripe.cli:main"

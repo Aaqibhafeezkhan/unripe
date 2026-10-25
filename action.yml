@@ -1,6 +1,6 @@
 name: unripe dependency cooldown
 description: Fail when a locked dependency version was published more recently than you trust
-author: TexWoW
+author: glumly
 branding:
   icon: clock
   color: green

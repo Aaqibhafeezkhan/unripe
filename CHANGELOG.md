@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.2 (2026-10-25)
+
+- The repository moved to `glumly/unripe` when its owner renamed the GitHub
+  account. Workflows should use `glumly/unripe@v0.10.2`; `TexWoW/unripe`
+  still redirects for now. The project links, the User-Agent unripe sends to
+  registries and the MCP registry name (`io.github.glumly/unripe`) follow.
+  No behaviour changes.
+
 ## 0.10.1 (2026-10-24)
 
 - The Action is named "unripe dependency cooldown", so it can be listed on

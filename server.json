@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.texWoW/unripe",
+  "name": "io.github.glumly/unripe",
   "title": "unripe",
   "description": "Check how long ago a package version was published before an agent adds it, in 20 ecosystems.",
   "repository": {
-    "url": "https://github.com/TexWoW/unripe",
+    "url": "https://github.com/glumly/unripe",
     "source": "github"
   },
-  "version": "0.10.1",
+  "version": "0.10.2",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "unripe",
-      "version": "0.10.1",
+      "version": "0.10.2",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

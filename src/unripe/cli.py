@@ -352,7 +352,7 @@ def runconfig(args: argparse.Namespace) -> int:
 
 STARTER = """\
 # unripe: fail when a locked dependency version is younger than this.
-# https://github.com/TexWoW/unripe#configuration
+# https://github.com/glumly/unripe#configuration
 min-age = "{age}"
 
 # what a version whose publish time can't be found does: fail or warn
@@ -394,7 +394,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: TexWoW/unripe@v{version}
+      - uses: glumly/unripe@v{version}
         with:
           comment: true
 """
