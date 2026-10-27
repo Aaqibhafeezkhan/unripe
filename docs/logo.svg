@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b3a1e"/>
+      <stop offset="1" stop-color="#0a170c"/>
+    </linearGradient>
+    <radialGradient id="fruit" cx="0.36" cy="0.3" r="0.8">
+      <stop offset="0" stop-color="#c9f28c"/>
+      <stop offset="0.42" stop-color="#93d24f"/>
+      <stop offset="1" stop-color="#4f8f27"/>
+    </radialGradient>
+    <linearGradient id="leaf" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#3f9a39"/>
+      <stop offset="1" stop-color="#6fcf4f"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect x="6" y="6" width="500" height="500" rx="106" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="4"/>
+  <ellipse cx="256" cy="436" rx="120" ry="18" fill="#000" opacity="0.35"/>
+  <path d="M256 190 C226 170 168 168 138 208 C106 250 110 316 136 366 C160 414 200 442 232 436 C244 434 250 428 256 428 C262 428 268 434 280 436 C312 442 352 414 376 366 C402 316 406 250 374 208 C344 168 286 170 256 190 Z" fill="url(#fruit)"/>
+  <path d="M176 238 C186 214 208 202 228 204" stroke="#ffffff" stroke-opacity="0.55" stroke-width="16" stroke-linecap="round" fill="none"/>
+  <path d="M256 196 C256 160 262 136 278 116" stroke="#4a3420" stroke-width="20" stroke-linecap="round" fill="none"/>
+  <path d="M272 146 C300 98 362 86 398 106 C378 152 318 172 272 146 Z" fill="url(#leaf)"/>
+  <path d="M282 144 C316 130 350 118 386 110" stroke="#2d7a2b" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <circle cx="360" cy="372" r="62" fill="#0a170c"/>
+  <circle cx="360" cy="372" r="48" fill="#eaffd6"/>
+  <path d="M360 342 V374 L382 388" stroke="#1b3a1e" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

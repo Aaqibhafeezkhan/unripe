@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.png" alt="unripe logo: a green apple with a clock" width="128"></p>
+
 # unripe
 
 [![PyPI](https://img.shields.io/pypi/v/unripe)](https://pypi.org/project/unripe/)
