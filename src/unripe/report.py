@@ -16,7 +16,7 @@ from unripe.check import Result
 from unripe.model import Finding
 from unripe.policy import spoken
 
-HOME = "https://github.com/glumly/unripe"
+HOME = "https://github.com/ashfall-sh/unripe"
 FORMATS = ("text", "json", "sarif", "markdown", "github", "codequality", "junit")
 # more rows than this make a pull request comment too long to read, and GitHub caps comments at 65536 characters
 ROWS = 50

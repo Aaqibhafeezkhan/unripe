@@ -243,7 +243,7 @@ def test_init_writes_a_config_and_a_workflow(fake, tmp_path, monkeypatch, capsys
     assert cli.main(["init", "--github", "--min-age", "72h"]) == 0
     assert 'min-age = "3d"' in (tmp_path / ".unripe.toml").read_text()
     flow = (tmp_path / ".github" / "workflows" / "unripe.yml").read_text()
-    assert "branches: [trunk]" in flow and f"glumly/unripe@v{__version__}" in flow
+    assert "branches: [trunk]" in flow and f"ashfall-sh/unripe@v{__version__}" in flow
     from unripe.policy import build, config
 
     settings, source = config(tmp_path)

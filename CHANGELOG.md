@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- The repository moved to the `ashfall-sh` organisation. Workflows should use
+  `ashfall-sh/unripe@v0.10.2`; `glumly/unripe` redirects. The project links and
+  the User-Agent unripe sends to registries follow. The MCP registry name stays
+  `io.github.glumly/unripe`. No behaviour changes.
+
 ## 0.10.2 (2026-10-25)
 
 - The repository moved to `glumly/unripe` when its owner renamed the GitHub

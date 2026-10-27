@@ -4,7 +4,7 @@
   "title": "unripe",
   "description": "Check how long ago a package version was published before an agent adds it, in 20 ecosystems.",
   "repository": {
-    "url": "https://github.com/glumly/unripe",
+    "url": "https://github.com/ashfall-sh/unripe",
     "source": "github"
   },
   "version": "0.10.2",
