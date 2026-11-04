@@ -185,13 +185,17 @@ def test_go_mod_applies_replacements():
     }
 
 
-def test_composer_lock_carries_times_and_skips_dev_branches():
+def test_composer_lock_trusts_published_time_and_skips_dev_branches():
     found = {p.name: p for p in parse("composer/composer.lock")}
-    assert set(found) == {"monolog/monolog", "old/no-zone", "psr/log", "symfony/console", "phpunit/phpunit"}
-    assert found["monolog/monolog"].published == datetime(2023, 10, 27, 15, 32, 31, tzinfo=timezone.utc)
-    assert found["old/no-zone"].published == datetime(2015, 10, 2, 12, 0, tzinfo=timezone.utc)
+    assert set(found) == {"monolog/monolog", "old/no-zone", "psr/log", "symfony/console", "psr/container", "phpunit/phpunit"}
+    # Composer 2.11 and later write Packagist's own published-time
+    assert found["psr/container"].published == datetime(2021, 11, 5, 16, 53, 27, tzinfo=timezone.utc)
+    # older lockfiles only have the release's time, which its author sets: kept for when Packagist can't say
+    assert found["monolog/monolog"].published is None
+    assert found["monolog/monolog"].authored == datetime(2023, 10, 27, 15, 32, 31, tzinfo=timezone.utc)
+    assert found["old/no-zone"].authored == datetime(2015, 10, 2, 12, 0, tzinfo=timezone.utc)
     assert found["old/no-zone"].version == "1.0.0"
-    assert found["symfony/console"].published is None
+    assert found["symfony/console"].published is None and found["symfony/console"].authored is None
 
 
 def test_gemfile_lock_rubygems_org_only_with_platforms():

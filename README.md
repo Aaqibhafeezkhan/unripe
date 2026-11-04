@@ -86,8 +86,8 @@ if yours has one you should turn it on. unripe is for what those settings
 don't do. It checks what is already in the lockfile, including whatever a bot,
 an agent or an old tool put there. It reports on just the versions a pull
 request adds. It applies one policy to every ecosystem in the repo. And it
-covers Go, Composer, NuGet, Gradle, Dart, CocoaPods, Swift, Terraform, Conan,
-R, Nix, Bazel, vcpkg and GitHub Actions, which don't have a setting yet.
+covers Go, NuGet, Gradle, Dart, CocoaPods, Swift, Terraform, Conan, R, Nix,
+Bazel, vcpkg and GitHub Actions, which don't have a setting yet.
 
 [docs/case-studies.md](docs/case-studies.md) replays more incidents the same
 way, and [docs/threat-model.md](docs/threat-model.md) says plainly what a
@@ -273,7 +273,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: ashfall-sh/unripe@v0.10.2
+      - uses: ashfall-sh/unripe@v0.11.0
         with:
           min-age: 3d
           comment: true
@@ -321,7 +321,7 @@ If you want the results as code scanning alerts, write SARIF and upload it
 (this needs `security-events: write`):
 
 ```yaml
-      - uses: ashfall-sh/unripe@v0.10.2
+      - uses: ashfall-sh/unripe@v0.11.0
         with:
           sarif: unripe.sarif
       - uses: github/codeql-action/upload-sarif@v4
@@ -335,7 +335,7 @@ If you want the results as code scanning alerts, write SARIF and upload it
 ```yaml
 repos:
   - repo: https://github.com/ashfall-sh/unripe
-    rev: v0.10.2
+    rev: v0.11.0
     hooks:
       - id: unripe
 ```
@@ -347,7 +347,7 @@ you only want it to look at what the commit adds.
 
 ```yaml
 include:
-  - remote: https://raw.githubusercontent.com/ashfall-sh/unripe/v0.10.2/ci/gitlab.yml
+  - remote: https://raw.githubusercontent.com/ashfall-sh/unripe/v0.11.0/ci/gitlab.yml
 ```
 
 That adds an `unripe` job to the `test` stage. On merge requests it checks
@@ -368,7 +368,7 @@ their cooldowns too, so they stop opening pull requests unripe would fail.
 ## With AI coding agents
 
 ```bash
-claude mcp add unripe -- uvx unripe@0.10.2 mcp
+claude mcp add unripe -- uvx unripe@0.11.0 mcp
 ```
 
 `unripe mcp` is a Model Context Protocol server with three read-only tools:
@@ -457,9 +457,10 @@ each version that is too new.
 `unripe config` shows the settings in use and where they came from. It also
 reads the cooldown settings your package managers and update bots already
 have (`.npmrc`, `pnpm-workspace.yaml`, `.yarnrc.yml`, `bunfig.toml`, uv,
-Poetry, Deno, Cargo, Bundler, Dependabot and Renovate), says where they
-disagree with unripe, and prints the lines you could add for the ones that
-are missing.
+Poetry, Deno, Cargo, Composer, Bundler, Dependabot and Renovate), says where
+they disagree with unripe, and prints the lines you could add for the ones
+that are missing. It also says when a setting is in a place its tool no
+longer reads, like `minimum-release-age` in `.npmrc` under pnpm 11.
 
 ## Command line
 
@@ -576,19 +577,23 @@ it uses the youngest age it can't rule out. `GOSUMDB`, `GONOSUMDB` and
 `GOPRIVATE` are honoured, and private modules fall back to the commit time.
 [docs/go.md](docs/go.md) explains how it works.
 
-`uv.lock`, `pylock.toml` and `composer.lock` carry publish times themselves
-and unripe trusts them. Someone who can edit your lockfile can change those
+`uv.lock` and `pylock.toml` carry publish times themselves and unripe trusts
+them. So does `composer.lock` from Composer 2.11 or later, which records
+Packagist's `published-time`. An older `composer.lock` only has each
+release's `time`, which its author sets, so unripe asks Packagist instead,
+and uses the lockfile's `time` (labelled as the author's) only for a package
+Packagist doesn't have. Someone who can edit your lockfile can change those
 times, but they could also point it at any package they like, so that isn't
 something unripe tries to defend against.
 
 ## Next to the built-in settings
 
-As of October 2026:
+As of November 2026:
 
 | | Setting |
 |---|---|
 | npm 11.10+ | `min-release-age` in `.npmrc`, in days |
-| pnpm 10.16+ | `minimumReleaseAge` in `pnpm-workspace.yaml`, in minutes (on by default since pnpm 11, at one day) |
+| pnpm 10.16+ | `minimumReleaseAge` in `pnpm-workspace.yaml`, in minutes (on by default since pnpm 11, at one day; pnpm 11 ignores it in `.npmrc`) |
 | yarn 4.10+ | `npmMinimalAgeGate` in `.yarnrc.yml` |
 | bun 1.3+ | `minimumReleaseAge` in `bunfig.toml`, in seconds |
 | Deno | `minimumDependencyAge` in `deno.json` (on by default since Deno 2.9, at 24 hours) |
@@ -598,7 +603,7 @@ As of October 2026:
 | Bundler 4.0.13+ | `bundle config set cooldown 3`, in days |
 | Hex 2.5.0+ | `mix hex.config cooldown 3d` |
 | Cargo | `registry.global-min-publish-age`, unstable now, expected stable in Rust 1.100 |
-| Composer | proposed |
+| Composer 2.11+ | `policy.cooldown.period` in the `config` of `composer.json`, like `"3 days"` |
 | Go, NuGet, Maven, Gradle, GitHub Actions | nothing yet |
 | Dart, CocoaPods, Swift, Terraform, Conan, R, Nix, Bazel, vcpkg | nothing we know of |
 

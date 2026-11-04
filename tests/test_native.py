@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 
 import pytest
@@ -15,6 +16,7 @@ from unripe import native
         ("3d", timedelta(days=3)),
         ("1 week", timedelta(weeks=1)),
         ("90 minutes", timedelta(minutes=90)),
+        ("30 seconds", timedelta(seconds=30)),
         ("2026-10-01T00:00:00Z", None),
         ("P", None),
     ],
@@ -56,6 +58,31 @@ def test_every_setting_is_read_in_its_own_unit(tmp_path):
     }
 
 
+@pytest.mark.parametrize(
+    "config, age, held",
+    [
+        ({"period": "3 days"}, timedelta(days=3), True),
+        ({"period": 86400}, timedelta(days=1), True),
+        ({"period": "1 week", "block": False}, timedelta(weeks=1), False),
+    ],
+)
+def test_composer_cooldown(tmp_path, config, age, held):
+    (tmp_path / "composer.json").write_text(json.dumps({"require": {}, "config": {"policy": {"cooldown": config}}}))
+    [setting] = native.find(tmp_path)
+    assert (setting.tool, setting.age, not setting.ignored) == ("composer", age, held)
+
+
+def test_pnpm_11_ignores_its_setting_in_npmrc(tmp_path):
+    (tmp_path / ".npmrc").write_text("minimum-release-age=10080\n")
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    found = native.find(tmp_path)
+    [setting] = found
+    assert (setting.tool, setting.age) == ("pnpm", timedelta(days=7))
+    assert "pnpm-workspace.yaml, as minimumReleaseAge: 10080" in setting.ignored
+    # the note says what to move, so no second hint with a different number
+    assert native.hints(tmp_path, found, timedelta(days=3)) == []
+
+
 def test_a_fixed_date_is_found_but_not_compared(tmp_path):
     (tmp_path / "uv.toml").write_text('exclude-newer = "2026-10-01T00:00:00Z"\n')
     [setting] = native.find(tmp_path)
@@ -63,11 +90,11 @@ def test_a_fixed_date_is_found_but_not_compared(tmp_path):
 
 
 def test_hints_follow_the_lockfiles_present(tmp_path):
-    for name in ("package-lock.json", "bun.lock", "Gemfile.lock"):
+    for name in ("package-lock.json", "bun.lock", "Gemfile.lock", "composer.lock"):
         (tmp_path / name).write_text("{}")
     (tmp_path / "bunfig.toml").write_text("[install]\nminimumReleaseAge = 86400\n")
     tools = [hint.tool for hint in native.hints(tmp_path, native.find(tmp_path), timedelta(days=3))]
-    assert tools == ["npm", "bundler"]
+    assert tools == ["npm", "composer", "bundler"]
 
 
 def test_deno_object_form(tmp_path):

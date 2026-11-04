@@ -16,8 +16,8 @@ from datetime import timedelta
 from pathlib import Path
 
 ISO = re.compile(r"^P(?:(\d+(?:\.\d+)?)W)?(?:(\d+(?:\.\d+)?)D)?(?:T(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?)?$", re.IGNORECASE)
-WORDS = re.compile(r"^(\d+(?:\.\d+)?)\s*(minutes?|mins?|m|hours?|h|days?|d|weeks?|w)$", re.IGNORECASE)
-UNIT = {"m": 60, "h": 3600, "d": 86400, "w": 604800}
+WORDS = re.compile(r"^(\d+(?:\.\d+)?)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|h|days?|d|weeks?|w)$", re.IGNORECASE)
+UNIT = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,7 @@ class Setting:
     name: str
     age: timedelta | None  # None when it is set to something that is not a duration, like a fixed date
     raw: str = ""
+    ignored: str = ""  # why it doesn't hold a version back, when it doesn't
 
 
 @dataclass(frozen=True)
@@ -94,9 +95,9 @@ def find(directory: Path) -> list[Setting]:
     """Every cooldown setting in a repository's own files. Settings in home directories are not read."""
     found: list[Setting] = []
 
-    def add(tool: str, file: str, name: str, value, age: timedelta | None) -> None:
+    def add(tool: str, file: str, name: str, value, age: timedelta | None, ignored: str = "") -> None:
         if value is not None:
-            found.append(Setting(tool, file, name, age, str(value)))
+            found.append(Setting(tool, file, name, age, str(value), ignored))
 
     def at(name: str) -> Path | None:
         path = directory / name
@@ -105,6 +106,9 @@ def find(directory: Path) -> list[Setting]:
     if path := at(".npmrc"):
         value = ini(path, "min-release-age")
         add("npm", ".npmrc", "min-release-age", value, number(value, timedelta(days=1)) if value else None)
+        if value := ini(path, "minimum-release-age"):
+            add("pnpm", ".npmrc", "minimum-release-age", value, number(value, timedelta(minutes=1)),
+                f"pnpm 11 and later only read it from pnpm-workspace.yaml, as minimumReleaseAge: {value}")
     if path := at("pnpm-workspace.yaml"):
         value = yaml(path, "minimumReleaseAge")
         add("pnpm", "pnpm-workspace.yaml", "minimumReleaseAge", value, number(value, timedelta(minutes=1)) if value else None)
@@ -134,6 +138,19 @@ def find(directory: Path) -> list[Setting]:
                     value = inner.group(1) if inner else value
                 value = value.strip('"')
                 add("deno", name, "minimumDependencyAge", value, spelled(value) or number(value, timedelta(minutes=1)))
+    if path := at("composer.json"):
+        try:
+            cooldown = json.loads(path.read_text("utf-8", errors="replace"))
+        except ValueError:
+            cooldown = None
+        for key in ("config", "policy", "cooldown"):
+            cooldown = cooldown.get(key) if isinstance(cooldown, dict) else None
+        value = cooldown.get("period") if isinstance(cooldown, dict) else None
+        if value and not isinstance(value, bool):
+            age = number(value, timedelta(seconds=1)) if isinstance(value, int) else spelled(value)
+            held = cooldown.get("block", True) is not False
+            add("composer", "composer.json", "config.policy.cooldown.period", value, age,
+                "" if held else "block is false, so Composer reports versions this new without holding them back")
     if path := at(".cargo/config.toml"):
         value = toml(path, "registry", "global-min-publish-age")
         add("cargo", ".cargo/config.toml", "registry.global-min-publish-age", value, spelled(value) if isinstance(value, str) else None)
@@ -179,6 +196,8 @@ def hints(directory: Path, found: list[Setting], age: timedelta) -> list[Hint]:
         out.append(Hint("poetry", "poetry.toml", f"[solver]\nmin-release-age = {days}"))
     if uses("deno.lock") and "deno" not in have:
         out.append(Hint("deno", "deno.json", f'"minimumDependencyAge": "P{days}D"'))
+    if uses("composer.lock") and "composer" not in have:
+        out.append(Hint("composer", "composer.json", f'"config": {{"policy": {{"cooldown": {{"period": "{days} days"}}}}}}'))
     if uses("Gemfile.lock") and "bundler" not in have:
         out.append(Hint("bundler", ".bundle/config", f'BUNDLE_COOLDOWN: "{days}"'))
     return out

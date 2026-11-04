@@ -312,6 +312,9 @@ OSV = {
 class Cache:
     """Publish times on disk, one JSON file per ecosystem. Safe to delete at any time."""
 
+    # a new file when an ecosystem's times come from somewhere new, so the old ones aren't reused
+    FILES = {"composer": "composer-published"}
+
     def __init__(self, directory: Path | None):
         self.directory = directory
         self.lock = threading.Lock()
@@ -326,7 +329,7 @@ class Cache:
             self.data[ecosystem] = {}
             if self.directory:
                 try:
-                    loaded = json.loads((self.directory / f"{ecosystem}.json").read_text("utf-8"))
+                    loaded = json.loads((self.directory / f"{self.FILES.get(ecosystem, ecosystem)}.json").read_text("utf-8"))
                     if isinstance(loaded, dict):
                         self.data[ecosystem] = loaded
                 except (OSError, ValueError):
@@ -376,7 +379,7 @@ class Cache:
             try:
                 self.directory.mkdir(parents=True, exist_ok=True)
                 for ecosystem in self.dirty:
-                    target = self.directory / f"{ecosystem}.json"
+                    target = self.directory / f"{self.FILES.get(ecosystem, ecosystem)}.json"
                     temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
                     temporary.write_text(json.dumps(self.data[ecosystem], sort_keys=True), "utf-8")
                     os.replace(temporary, target)
@@ -666,13 +669,25 @@ class Registries:
         stamp = self.cache.get(package)
         if stamp is None:
             if self.offline:
+                if package.authored:
+                    return self.authored(package)
                 raise Unreachable("not in the cache, and --offline is set")
             lookup = self.lookups.get(package.ecosystem)
             if lookup is None:
                 raise Missing(f"unripe has no registry for {package.ecosystem}")
-            stamp = lookup(package)
+            try:
+                stamp = lookup(package)
+            except Missing:
+                if not package.authored:
+                    raise
+                return self.authored(package)
         self.cache.put(package.ecosystem, package.name, package.version, stamp)
         return stamp
+
+    def authored(self, package: Package) -> datetime:
+        """The lockfile's own time for a version the registry can't date. Its author sets it, so it is labelled and not cached."""
+        self.dated(package.ecosystem, package.name, package.version, COMMIT)
+        return package.authored
 
     def once(self, key: str) -> threading.Lock:
         with self.guard:
@@ -834,13 +849,17 @@ class Registries:
                     current.pop(key, None)
                 else:
                     current[key] = value
-            if current.get("version") and current.get("time"):
+            # published-time is Packagist's own record; time is the release's commit time, which its author sets
+            moment = current.get("published-time") or current.get("time")
+            if current.get("version") and moment:
+                version = str(current["version"]).lstrip("v")
                 try:
-                    times[str(current["version"]).lstrip("v")] = when(str(current["time"]))
+                    times[version] = when(str(moment))
                 except ValueError:
                     continue
+                self.dated("composer", name, version, "" if current.get("published-time") else COMMIT)
                 if current.get("abandoned"):
-                    self.deprecate("composer", name, str(current["version"]).lstrip("v"))
+                    self.deprecate("composer", name, version)
         return times
 
     def rubygems(self, package: Package) -> datetime:

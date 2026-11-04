@@ -137,7 +137,12 @@ def directive(verb: str, body: str, required: dict, replaced: dict) -> None:
 
 
 def composer(text: str, lockfile: str) -> list[Package]:
-    """composer.lock records each package's release time itself, so no registry is needed."""
+    """
+    Packages from composer.lock. Composer 2.11 and later write `published-time`,
+    which Packagist records itself, so no registry is needed. `time` is the
+    release's commit time, which its author sets, so it is kept only for when
+    Packagist can't date the version.
+    """
     data = json.loads(text)
     found = []
     for group in ("packages", "packages-dev"):
@@ -145,17 +150,20 @@ def composer(text: str, lockfile: str) -> list[Package]:
             name, version = entry.get("name"), str(entry.get("version") or "")
             if not name or not version or version.startswith("dev-"):
                 continue
-            published = None
-            if entry.get("time"):
-                try:
-                    published = datetime.fromisoformat(str(entry["time"]).replace("Z", "+00:00"))
-                except ValueError:
-                    published = None
-                if published and not published.tzinfo:
-                    # old composer versions wrote times without a zone; packagist uses UTC
-                    published = published.replace(tzinfo=timezone.utc)
-            found.append(Package("composer", name, version.lstrip("v"), lockfile, published))
+            published, authored = stamp(entry.get("published-time")), stamp(entry.get("time"))
+            found.append(Package("composer", name, version.lstrip("v"), lockfile, published, authored))
     return found
+
+
+def stamp(value) -> datetime | None:
+    """A composer.lock time. Old Composer versions wrote them without a zone; Packagist uses UTC."""
+    if not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
 def mixlock(text: str, lockfile: str) -> list[Package]:

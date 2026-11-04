@@ -42,6 +42,8 @@ class Package:
     lockfile: str = field(default="", compare=False)
     # some lockfiles carry the publish time themselves (composer.lock does)
     published: datetime | None = field(default=None, compare=False, hash=False)
+    # a time the lockfile gives that the package's author sets, used only when the registry can't say
+    authored: datetime | None = field(default=None, compare=False, hash=False)
 
     @property
     def key(self) -> tuple[str, str, str]:

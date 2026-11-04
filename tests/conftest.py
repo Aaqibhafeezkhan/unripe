@@ -319,7 +319,8 @@ class FakeRegistry:
             entries = []
             for number, (version, moment) in enumerate(sorted(self.versions("composer", name).items(), reverse=True)):
                 # minified like the real p2 files: the first entry is full, later ones list changes
-                entry = {"version": f"v{version}", "version_normalized": f"{version}.0", "time": moment.isoformat()}
+                # published-time is Packagist's; the author's time is a year earlier, as on a backdated release
+                entry = {"version": f"v{version}", "version_normalized": f"{version}.0", "time": (moment - timedelta(days=365)).isoformat(), "published-time": moment.isoformat()}
                 if number == 0:
                     entry.update({"name": name, "type": "library", "license": ["MIT"]})
                 entries.append(entry)

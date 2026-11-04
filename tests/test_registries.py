@@ -108,6 +108,31 @@ def test_composer_expands_minified_entries(fake, lookups):
     assert lookups.published(Package("composer", "psr/log", "2.0.0")) == older
 
 
+def test_composer_is_dated_by_packagist_not_its_author(fake, lookups):
+    moment = fake.add("composer", "psr/log", "3.0.0", timedelta(days=2))
+    package = Package("composer", "psr/log", "3.0.0", authored=moment - timedelta(days=365))
+    assert lookups.published(package) == moment
+    assert lookups.basis(package) == ""
+
+
+def test_composer_time_alone_is_labelled_as_the_authors(monkeypatch, lookups):
+    payload = {"packages": {"a/b": [{"name": "a/b", "version": "v1.0.0", "time": "2024-01-02T00:00:00+00:00"}]}}
+    monkeypatch.setattr(registries, "fetchtext", lambda url, accept="*/*": json.dumps(payload))
+    package = Package("composer", "a/b", "1.0.0")
+    assert lookups.published(package) == datetime(2024, 1, 2, tzinfo=timezone.utc)
+    assert lookups.basis(package) == registries.COMMIT
+
+
+def test_the_lockfiles_own_time_is_the_last_resort(fake):
+    moment = NOW - timedelta(days=30)
+    package = Package("composer", "private/pkg", "1.0.0", authored=moment)
+    for offline in (False, True):
+        lookups = Registries(Cache(None), now=NOW, offline=offline)
+        assert lookups.published(package) == moment
+        assert lookups.basis(package) == registries.COMMIT
+        assert lookups.cache.get(package) is None
+
+
 def test_composer_unset_fields_are_dropped(monkeypatch, lookups):
     payload = {
         "packages": {

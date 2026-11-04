@@ -1,11 +1,26 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 (2026-11-04)
 
+- Composer versions are dated by Packagist's `published-time`, its own record
+  of when it got a version. Until now unripe used `time`, the release's commit
+  time, which the package's author sets, so a new release with a backdated
+  commit passed. `composer.lock` files written by Composer 2.11 or later carry
+  `published-time` and still need no request. Older ones now ask Packagist
+  once per package, then the cache answers. A package Packagist doesn't have,
+  like one from a private repository, keeps the lockfile's `time`, labelled
+  as its commit time. Times cached by earlier versions aren't reused.
+- `unripe config` reads Composer 2.11's own cooldown,
+  `config.policy.cooldown.period` in `composer.json`, says when its `block` is
+  false, and suggests it for a repository with a `composer.lock`.
+- `unripe config` says when `.npmrc` has pnpm's `minimum-release-age`:
+  pnpm 11 and later only read it from `pnpm-workspace.yaml`, so it does
+  nothing there. The `cooldown_settings` MCP tool says the same, in a new
+  `ignored` field.
 - The repository moved to the `ashfall-sh` organisation. Workflows should use
-  `ashfall-sh/unripe@v0.10.2`; `glumly/unripe` redirects. The project links and
+  `ashfall-sh/unripe@v0.11.0`; `glumly/unripe` redirects. The project links and
   the User-Agent unripe sends to registries follow. The MCP registry name stays
-  `io.github.glumly/unripe`. No behaviour changes.
+  `io.github.glumly/unripe`.
 
 ## 0.10.2 (2026-10-25)
 

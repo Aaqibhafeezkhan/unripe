@@ -262,13 +262,23 @@ def cooldown_settings(arguments: dict) -> tuple[str, dict]:
         "unknown": policy.unknown,
         "exclude": policy.exclude,
         "native": [
-            {"tool": s.tool, "file": s.file, "setting": s.name, "value": s.raw, "age": spoken(s.age) if s.age else None}
+            {
+                "tool": s.tool,
+                "file": s.file,
+                "setting": s.name,
+                "value": s.raw,
+                "age": spoken(s.age) if s.age else None,
+                "ignored": s.ignored or None,
+            }
             for s in settings
         ],
         "could_add": [{"tool": h.tool, "file": h.file, "lines": h.line} for h in hints],
     }
     lines = [f"unripe minimum age: {data['min_age']}."]
-    lines += [f"{s['tool']} {s['file']}: {s['setting']} = {s['value']}" for s in data["native"]]
+    lines += [
+        f"{s['tool']} {s['file']}: {s['setting']} = {s['value']}" + (f", but {s['ignored']}" if s["ignored"] else "")
+        for s in data["native"]
+    ]
     lines += [f"could add to {h['file']} for {h['tool']}: {h['lines']}" for h in data["could_add"]]
     return "\n".join(lines), data
 

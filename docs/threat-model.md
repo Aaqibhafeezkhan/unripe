@@ -30,9 +30,9 @@ that in CI, from the lockfile, for every ecosystem in the repository.
   young, so it fails like any new version, but unripe has no opinion on
   whether `reqeusts` is the package you meant.
 - **It does not protect against whoever controls your lockfile.** `uv.lock`,
-  `pylock.toml` and `composer.lock` carry publish times, and unripe trusts
-  them. Someone who can edit the lockfile can change those times, but they
-  could also point it at any package they like.
+  `pylock.toml` and `composer.lock` (from Composer 2.11 on) carry publish
+  times, and unripe trusts them. Someone who can edit the lockfile can change
+  those times, but they could also point it at any package they like.
 
 ## Where the dates come from, and how far to trust them
 
@@ -42,6 +42,13 @@ the CocoaPods trunk, the Terraform registry, hex.pm and ConanCenter (the time
 a recipe revision reached the server). Maven repositories don't record it, but
 they never change a file once published, so the `Last-Modified` header of a
 version's POM is its publish time.
+
+Packagist has two times for each version. `time` is the release's commit
+time, which its author sets, so a release made today can claim to be years
+old. `published-time`, added in June 2026, is Packagist's own record of when
+it got the version. unripe uses `published-time` (unripe 0.10 and earlier used
+`time`), and a version only `time` can date is labelled as dated by its commit
+time.
 
 CRAN does too, read through crandb.r-pkg.org, which keeps every version CRAN
 published, archived ones included.

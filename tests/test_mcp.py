@@ -122,7 +122,7 @@ def test_cooldown_settings(server, tmp_path):
     (tmp_path / "package-lock.json").write_text("{}")
     (tmp_path / "pnpm-workspace.yaml").write_text("minimumReleaseAge: 4320\n")
     data = call(server, "cooldown_settings", {"path": str(tmp_path)})["structuredContent"]
-    assert data["native"] == [{"tool": "pnpm", "file": "pnpm-workspace.yaml", "setting": "minimumReleaseAge", "value": "4320", "age": "3d"}]
+    assert data["native"] == [{"tool": "pnpm", "file": "pnpm-workspace.yaml", "setting": "minimumReleaseAge", "value": "4320", "age": "3d", "ignored": None}]
     assert data["could_add"][0]["tool"] == "npm"
 
 

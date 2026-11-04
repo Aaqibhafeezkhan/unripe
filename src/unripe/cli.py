@@ -327,7 +327,9 @@ def runconfig(args: argparse.Namespace) -> int:
     if found:
         out.append("cooldown settings of the package managers and bots here:")
         for setting in found:
-            if setting.age is None:
+            if setting.ignored:
+                verdict = f"but {setting.ignored}"
+            elif setting.age is None:
                 verdict = "not a duration unripe can compare"
             elif setting.age < policy.min_age:
                 verdict = f"shorter than unripe's {spoken(policy.min_age)}"
